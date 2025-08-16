@@ -7,7 +7,8 @@ export default defineConfig({
         host_permissions: [
             'https://api.bilibili.com/*',
             'https://www.bilibili.com/*',
-            'https://www.youtube.com/oembed*'
+            'https://www.youtube.com/oembed*',
+            'https://raw.githubusercontent.com/*'
         ]
     }
 });
