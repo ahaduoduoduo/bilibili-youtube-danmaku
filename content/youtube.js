@@ -301,28 +301,22 @@ async function getEnhancedVideoTitle(videoId) {
 
 // 查找视频容器
 function findVideoContainer() {
-    // 优先查找YouTube播放器容器
-    const ytdContainer = document.querySelector('#container.style-scope.ytd-player');
-    if (ytdContainer && ytdContainer.offsetHeight > 0) {
-        return ytdContainer;
-    }
-
-    // 备选1：查找视频容器
+    // 最佳目标：直接包裹 <video> 元素的容器
     const videoContainer = document.querySelector('.html5-video-container');
     if (videoContainer && videoContainer.offsetHeight > 0) {
         return videoContainer;
     }
 
-    // 备选2：查找整个播放器
-    const moviePlayer = document.querySelector('#movie_player');
-    if (moviePlayer && moviePlayer.offsetHeight > 0) {
-        return moviePlayer;
-    }
-
-    // 最后尝试：直接查找视频元素的父容器
+    // 备选方案：<video> 元素的直接父元素
     const video = document.querySelector('video');
     if (video && video.parentElement && video.parentElement.offsetHeight > 0) {
         return video.parentElement;
+    }
+
+    // 最后的备选：旧版播放器ID，兼容性考虑
+    const moviePlayer = document.querySelector('#movie_player');
+    if (moviePlayer && moviePlayer.offsetHeight > 0) {
+        return moviePlayer;
     }
 
     return null;
