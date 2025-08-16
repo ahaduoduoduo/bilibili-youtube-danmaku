@@ -5,3 +5,5 @@
 assets/create-icons.html
 .vscode/
 node_modules/
+.output/
+.wxt/

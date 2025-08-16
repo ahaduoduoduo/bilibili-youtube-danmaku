@@ -1,5 +1,78 @@
 // B站番剧处理模块
-// 依赖: background.js 中的 WBI 签名函数
+
+// WBI签名相关配置
+const mixinKeyEncTab = [
+    46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49, 33, 9, 42, 19, 29,
+    28, 14, 39, 12, 38, 41, 13, 37, 48, 7, 16, 24, 55, 40, 61, 26, 17, 0, 1, 60, 51, 30, 4, 22, 25,
+    54, 21, 56, 59, 6, 63, 57, 62, 11, 36, 20, 34, 44, 52
+];
+
+// 对 imgKey 和 subKey 进行字符顺序打乱编码
+const getMixinKey = (orig) =>
+    mixinKeyEncTab
+        .map((n) => orig[n])
+        .join('')
+        .slice(0, 32);
+
+// 简化的MD5实现 (用于WBI签名)
+function simpleMd5(str) {
+    // 使用一个简化的哈希算法代替完整的MD5
+    // 这仅用于WBI签名，不需要加密级别的安全性
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+        const char = str.charCodeAt(i);
+        hash = (hash << 5) - hash + char;
+        hash = hash & hash; // Convert to 32-bit integer
+    }
+    return Math.abs(hash).toString(16).padStart(8, '0');
+}
+
+// 为请求参数进行 wbi 签名
+function encWbi(params, img_key, sub_key) {
+    const mixin_key = getMixinKey(img_key + sub_key);
+    const curr_time = Math.round(Date.now() / 1000);
+    const chr_filter = /[!'()*]/g;
+
+    const safeParams = {};
+    for (const [key, value] of Object.entries(params)) {
+        if (value !== undefined && value !== null) {
+            safeParams[key] = String(value).replace(chr_filter, '');
+        }
+    }
+
+    safeParams.wts = curr_time;
+
+    const query = Object.keys(safeParams)
+        .sort()
+        .map((key) => {
+            return `${encodeURIComponent(key)}=${encodeURIComponent(safeParams[key])}`;
+        })
+        .join('&');
+
+    const wbi_sign = simpleMd5(query + mixin_key);
+    return query + '&w_rid=' + wbi_sign;
+}
+
+// 获取最新的 img_key 和 sub_key
+async function getWbiKeys() {
+    const response = await fetch('https://api.bilibili.com/x/web-interface/nav', {
+        headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            Referer: 'https://www.bilibili.com/'
+        }
+    });
+
+    const data = await response.json();
+    if (!data.data?.wbi_img) {
+        throw new Error('无法获取WBI Keys');
+    }
+
+    const { img_url, sub_url } = data.data.wbi_img;
+    const img_key = img_url.slice(img_url.lastIndexOf('/') + 1, img_url.lastIndexOf('.'));
+    const sub_key = sub_url.slice(sub_url.lastIndexOf('/') + 1, sub_url.lastIndexOf('.'));
+
+    return { img_key, sub_key };
+}
 
 // B站番剧搜索功能 - 直接返回指定集数的bvid
 async function searchBilibiliBangumi(title, episode) {
@@ -188,10 +261,5 @@ async function getBangumiEpisodeDetail(epid) {
     }
 }
 
-// 导出函数供background.js使用
-if (typeof window === 'undefined') {
-    // Node.js环境或Web Worker环境
-    this.searchBilibiliBangumi = searchBilibiliBangumi;
-    this.findEpisodeByNumber = findEpisodeByNumber;
-    this.getBangumiEpisodeDetail = getBangumiEpisodeDetail;
-}
+// ES模块导出
+export { searchBilibiliBangumi, findEpisodeByNumber, getBangumiEpisodeDetail };

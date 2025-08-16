@@ -9,10 +9,18 @@
         "format:js": "prettier --write \"**/*.js\"",
         "format:css": "prettier --write \"**/*.css\"",
         "format:html": "prettier --write \"**/*.html\"",
-        "format:json": "prettier --write \"**/*.json\""
+        "format:json": "prettier --write \"**/*.json\"",
+        "dev": "wxt",
+        "dev:firefox": "wxt -b firefox",
+        "build": "wxt build",
+        "build:firefox": "wxt build -b firefox",
+        "zip": "wxt zip",
+        "zip:firefox": "wxt zip -b firefox",
+        "postinstall": "wxt prepare"
     },
     "devDependencies": {
-        "prettier": "^3.6.2"
+        "prettier": "^3.6.2",
+        "wxt": "^0.20.7"
     },
     "keywords": [
         "bilibili",

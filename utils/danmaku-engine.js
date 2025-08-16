@@ -577,3 +577,6 @@ class DanmakuEngine {
         }
     }
 }
+
+// ES模块导出
+export default DanmakuEngine;
