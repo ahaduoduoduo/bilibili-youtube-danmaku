@@ -11,40 +11,6 @@ export default defineContentScript({
         let currentVideoId = null;
         let currentPageInfo = null;
         let pageInfoCache = new Map();
-        let pluginGlobalEnabled = true; // 插件全局启用状态
-
-        // 检查插件全局状态
-        async function checkPluginGlobalState() {
-            try {
-                const result = await browser.storage.local.get('pluginGlobalEnabled');
-                pluginGlobalEnabled = result.pluginGlobalEnabled !== false; // 默认为启用状态
-                console.log('插件全局状态:', pluginGlobalEnabled ? '启用' : '禁用');
-                return pluginGlobalEnabled;
-            } catch (error) {
-                console.error('检查插件全局状态失败:', error);
-                return true; // 出错时默认启用
-            }
-        }
-
-        // 处理全局状态变化
-        function handleGlobalStateChange(enabled) {
-            pluginGlobalEnabled = enabled;
-            console.log('插件全局状态变化:', enabled ? '启用' : '禁用');
-
-            if (!enabled) {
-                // 禁用时销毁弹幕引擎
-                if (danmakuEngine) {
-                    danmakuEngine.destroy();
-                    danmakuEngine = null;
-                }
-                stopAdStatusMonitoring();
-            } else {
-                // 启用时重新初始化
-                setTimeout(() => {
-                    initDanmakuEngine();
-                }, 1000);
-            }
-        }
 
         // 获取YouTube视频ID
         function getVideoId() {
@@ -369,13 +335,6 @@ export default defineContentScript({
 
         // 初始化弹幕引擎
         async function initDanmakuEngine() {
-            // 检查插件全局状态
-            const globalEnabled = await checkPluginGlobalState();
-            if (!globalEnabled) {
-                console.log('插件已全局禁用，跳过弹幕引擎初始化');
-                return;
-            }
-
             const container = findVideoContainer();
             if (!container) {
                 console.log('未找到视频容器');
@@ -461,12 +420,6 @@ export default defineContentScript({
         // 自动检测并下载弹幕
         async function autoCheckAndDownloadDanmaku() {
             try {
-                // 检查插件全局状态
-                if (!pluginGlobalEnabled) {
-                    console.log('插件已全局禁用，跳过自动检测');
-                    return;
-                }
-
                 const videoId = getVideoId();
                 if (!videoId) {
                     console.log('无法获取视频ID，跳过自动检测');
@@ -682,12 +635,7 @@ export default defineContentScript({
 
         // 监听来自popup的消息
         browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
-            if (request.type === 'globalStateChanged') {
-                // 处理全局状态变化
-                handleGlobalStateChange(request.enabled);
-                sendResponse({ success: true });
-                return true;
-            } else if (request.type === 'updateSettings') {
+            if (request.type === 'updateSettings') {
                 if (danmakuEngine) {
                     danmakuEngine.updateSettings(request.settings);
                 }

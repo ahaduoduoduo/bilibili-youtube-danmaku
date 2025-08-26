@@ -10,60 +10,6 @@ export default defineBackground(() => {
     // 页面状态管理
     let tabPageStates = new Map(); // 存储每个标签页的页面状态
 
-    // 全局状态管理
-    async function getPluginGlobalState() {
-        const result = await browser.storage.local.get('pluginGlobalEnabled');
-        return result.pluginGlobalEnabled !== false; // 默认为启用状态
-    }
-
-    async function updateExtensionIcon(enabled) {
-        const iconPaths = {
-            16: enabled ? 'icon-16.png' : 'icon-16-off.png',
-            48: enabled ? 'icon-48.png' : 'icon-48-off.png',
-            128: enabled ? 'icon-128.png' : 'icon-128-off.png'
-        };
-
-        console.log('尝试更新图标:', enabled ? '启用' : '禁用', iconPaths);
-        console.log('可用的 API:', {
-            hasAction: !!(browser.action && browser.action.setIcon),
-            hasBrowserAction: !!(browser.browserAction && browser.browserAction.setIcon)
-        });
-
-        let success = false;
-
-        // 优先尝试 browser.action (Manifest V3)
-        if (browser.action && browser.action.setIcon) {
-            try {
-                await browser.action.setIcon({ path: iconPaths });
-                console.log('使用 browser.action 成功更新图标:', enabled ? '启用' : '禁用');
-                success = true;
-            } catch (error) {
-                console.error('browser.action.setIcon 失败:', error);
-            }
-        }
-
-        // 如果 browser.action 失败或不存在，尝试 browser.browserAction (Manifest V2 或 Firefox)
-        if (!success && browser.browserAction && browser.browserAction.setIcon) {
-            try {
-                await browser.browserAction.setIcon({ path: iconPaths });
-                console.log('使用 browser.browserAction 成功更新图标:', enabled ? '启用' : '禁用');
-                success = true;
-            } catch (error) {
-                console.error('browser.browserAction.setIcon 失败:', error);
-            }
-        }
-
-        if (!success) {
-            console.warn('无法更新扩展图标 - 当前浏览器可能不支持动态图标切换');
-        }
-    }
-
-    // 初始化图标状态
-    (async () => {
-        const enabled = await getPluginGlobalState();
-        await updateExtensionIcon(enabled);
-    })();
-
     // 页面状态管理函数
     function getTabPageState(tabId) {
         return tabPageStates.get(tabId) || null;
@@ -1257,19 +1203,7 @@ export default defineBackground(() => {
 
     // 监听来自popup的消息
     browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
-        if (request.type === 'updateGlobalState') {
-            // 处理全局状态更新
-            (async () => {
-                try {
-                    await updateExtensionIcon(request.enabled);
-                    sendResponse({ success: true });
-                } catch (error) {
-                    console.error('更新全局状态失败:', error);
-                    sendResponse({ success: false, error: error.message });
-                }
-            })();
-            return true; // 保持消息通道开启
-        } else if (request.type === 'downloadDanmaku') {
+        if (request.type === 'downloadDanmaku') {
             downloadAllDanmaku(request.bvid, request.youtubeVideoDuration)
                 .then(async (data) => {
                     // 保存弹幕数据
