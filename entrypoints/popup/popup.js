@@ -1495,12 +1495,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
     }
 
-    // 初始化全局开关状态
+    // 立即设置全局开关状态，避免动画
+    const globalToggle = document.getElementById('global-toggle');
     const globalEnabled = await getPluginGlobalState();
+    if (globalToggle) {
+        globalToggle.checked = globalEnabled;
+    }
     updatePluginUIState(globalEnabled);
 
     // 绑定全局开关事件
-    const globalToggle = document.getElementById('global-toggle');
     if (globalToggle) {
         globalToggle.addEventListener('change', async () => {
             const enabled = globalToggle.checked;
