@@ -149,7 +149,7 @@ input:checked + .toggle-slider:before {
     user-select: none;
 }
 
-.plugin-disabled .toggle-section {
+.plugin-disabled .global-toggle-section {
     opacity: 1;
     pointer-events: auto;
 }
