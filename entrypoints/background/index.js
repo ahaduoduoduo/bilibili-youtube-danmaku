@@ -23,11 +23,38 @@ export default defineBackground(() => {
             128: enabled ? 'icon-128.png' : 'icon-128-off.png'
         };
 
-        try {
-            await browser.action.setIcon({ path: iconPaths });
-            console.log('图标已更新:', enabled ? '启用' : '禁用');
-        } catch (error) {
-            console.error('更新图标失败:', error);
+        console.log('尝试更新图标:', enabled ? '启用' : '禁用', iconPaths);
+        console.log('可用的 API:', {
+            hasAction: !!(browser.action && browser.action.setIcon),
+            hasBrowserAction: !!(browser.browserAction && browser.browserAction.setIcon)
+        });
+
+        let success = false;
+
+        // 优先尝试 browser.action (Manifest V3)
+        if (browser.action && browser.action.setIcon) {
+            try {
+                await browser.action.setIcon({ path: iconPaths });
+                console.log('使用 browser.action 成功更新图标:', enabled ? '启用' : '禁用');
+                success = true;
+            } catch (error) {
+                console.error('browser.action.setIcon 失败:', error);
+            }
+        }
+
+        // 如果 browser.action 失败或不存在，尝试 browser.browserAction (Manifest V2 或 Firefox)
+        if (!success && browser.browserAction && browser.browserAction.setIcon) {
+            try {
+                await browser.browserAction.setIcon({ path: iconPaths });
+                console.log('使用 browser.browserAction 成功更新图标:', enabled ? '启用' : '禁用');
+                success = true;
+            } catch (error) {
+                console.error('browser.browserAction.setIcon 失败:', error);
+            }
+        }
+
+        if (!success) {
+            console.warn('无法更新扩展图标 - 当前浏览器可能不支持动态图标切换');
         }
     }
 
