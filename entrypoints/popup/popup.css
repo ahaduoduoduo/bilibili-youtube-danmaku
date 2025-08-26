@@ -65,6 +65,95 @@ h1 {
     text-align: center;
 }
 
+/* 开关样式 */
+.toggle-section {
+    background: #fff;
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 16px;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* 弹幕开关在controls区域内的样式调整 */
+.controls .toggle-section {
+    margin-bottom: 12px;
+    margin-top: 0;
+}
+
+.toggle-container {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.toggle-label {
+    font-size: 14px;
+    font-weight: 600;
+    color: #333;
+}
+
+.toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 48px;
+    height: 26px;
+}
+
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #ccc;
+    transition: 0.4s;
+    border-radius: 26px;
+}
+
+.toggle-slider:before {
+    position: absolute;
+    content: '';
+    height: 20px;
+    width: 20px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: 0.4s;
+    border-radius: 50%;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+input:checked + .toggle-slider {
+    background-color: #4caf50;
+}
+
+input:checked + .toggle-slider:before {
+    transform: translateX(22px);
+}
+
+.toggle-slider:hover {
+    box-shadow: 0 0 8px rgba(76, 175, 80, 0.3);
+}
+
+/* 插件禁用状态样式 */
+.plugin-disabled {
+    opacity: 0.5;
+    pointer-events: none;
+    user-select: none;
+}
+
+.plugin-disabled .toggle-section {
+    opacity: 1;
+    pointer-events: auto;
+}
+
 /* 社交图标样式 */
 .social-icons {
     display: flex;
@@ -856,9 +945,21 @@ h1 {
     .channel-info,
     .association-section,
     .search-results,
-    .manual-input {
+    .manual-input,
+    .toggle-section {
         background: #2d2d2d;
         box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+    }
+
+    /* 弹幕开关在controls区域内的深色模式样式调整 */
+    .controls .toggle-section {
+        margin-bottom: 12px;
+        margin-top: 0;
+    }
+
+    /* 开关深色模式 */
+    .toggle-label {
+        color: #e0e0e0;
     }
 
     /* 频道信息 */

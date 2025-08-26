@@ -10,6 +10,33 @@ export default defineBackground(() => {
     // 页面状态管理
     let tabPageStates = new Map(); // 存储每个标签页的页面状态
 
+    // 全局状态管理
+    async function getPluginGlobalState() {
+        const result = await browser.storage.local.get('pluginGlobalEnabled');
+        return result.pluginGlobalEnabled !== false; // 默认为启用状态
+    }
+
+    async function updateExtensionIcon(enabled) {
+        const iconPaths = {
+            16: enabled ? 'icon-16.png' : 'icon-16-off.png',
+            48: enabled ? 'icon-48.png' : 'icon-48-off.png',
+            128: enabled ? 'icon-128.png' : 'icon-128-off.png'
+        };
+
+        try {
+            await browser.action.setIcon({ path: iconPaths });
+            console.log('图标已更新:', enabled ? '启用' : '禁用');
+        } catch (error) {
+            console.error('更新图标失败:', error);
+        }
+    }
+
+    // 初始化图标状态
+    (async () => {
+        const enabled = await getPluginGlobalState();
+        await updateExtensionIcon(enabled);
+    })();
+
     // 页面状态管理函数
     function getTabPageState(tabId) {
         return tabPageStates.get(tabId) || null;
@@ -387,13 +414,13 @@ export default defineBackground(() => {
     // 判断文本是否为纯英文和数字（去除标点符号后判断）
     function isPureEnglishOrNumber(text) {
         if (!text || typeof text !== 'string') return false;
-        
+
         // 先去除所有标点符号和特殊字符，只保留字母、数字和空格
         const cleaned = text.replace(/[^\w\s]/g, '');
-        
+
         // 如果清理后为空，说明只有标点符号
         if (!cleaned.trim()) return false;
-        
+
         // 判断是否只包含英文字母、数字和空格
         return /^[a-zA-Z0-9\s]*$/.test(cleaned);
     }
@@ -404,8 +431,8 @@ export default defineBackground(() => {
         if (parts.length === 1) return parts[0];
 
         // 分为纯英文数字部分和非纯英文数字部分
-        const nonPureEnglishParts = parts.filter(part => !isPureEnglishOrNumber(part));
-        const pureEnglishParts = parts.filter(part => isPureEnglishOrNumber(part));
+        const nonPureEnglishParts = parts.filter((part) => !isPureEnglishOrNumber(part));
+        const pureEnglishParts = parts.filter((part) => isPureEnglishOrNumber(part));
 
         // 优先从非纯英文数字部分中选择最长的
         if (nonPureEnglishParts.length > 0) {
@@ -429,9 +456,10 @@ export default defineBackground(() => {
         if (!title || typeof title !== 'string') return title;
 
         // 同时使用竖线和空格作为分隔符进行分割
-        const parts = title.split(/[｜|\s]+/)
-            .map(part => part.trim())
-            .filter(part => part.length > 0);
+        const parts = title
+            .split(/[｜|\s]+/)
+            .map((part) => part.trim())
+            .filter((part) => part.length > 0);
 
         // 如果分割后只有一个部分或无法分割，返回原标题
         if (parts.length <= 1) {
@@ -439,7 +467,7 @@ export default defineBackground(() => {
         }
 
         console.log(`标题分割结果:`, parts);
-        
+
         // 选择最佳部分
         return selectBestPart(parts);
     }
@@ -447,11 +475,11 @@ export default defineBackground(() => {
     // 去掉结尾的英文字符（只有去掉后还有内容时才去掉）
     function removeTrailingEnglish(text) {
         if (!text || typeof text !== 'string') return text;
-        
+
         // 匹配结尾的英文字母、数字、空格和常见标点符号
         const trailingEnglishRegex = /[a-zA-Z0-9\s\.,!?\-_'"():;]+$/;
         const match = text.match(trailingEnglishRegex);
-        
+
         if (match) {
             const withoutTrailing = text.slice(0, match.index).trim();
             // 只有去掉后还有内容时才返回去掉结尾的版本
@@ -460,7 +488,7 @@ export default defineBackground(() => {
                 return withoutTrailing;
             }
         }
-        
+
         return text; // 原样返回
     }
 
@@ -524,8 +552,8 @@ export default defineBackground(() => {
         try {
             const response = await fetch(`https://bsbsb.top/api/skipSegments?videoID=${bvid}`, {
                 headers: {
-                    "origin": "chrome-extension://dmkbhbnbpfijhgpnfahfioedledohfja",
-                    "x-ext-version": "1.1.5"
+                    origin: 'chrome-extension://dmkbhbnbpfijhgpnfahfioedledohfja',
+                    'x-ext-version': '1.1.5'
                 }
             });
 
@@ -540,11 +568,11 @@ export default defineBackground(() => {
             }
 
             const skipSegments = await response.json();
-            
+
             // 筛选出赞助（sponsor）类型的片段
             const sponsorSegments = skipSegments
-                .filter(segment => segment.category === 'sponsor')
-                .map(segment => segment.segment)
+                .filter((segment) => segment.category === 'sponsor')
+                .map((segment) => segment.segment)
                 .sort((a, b) => a[0] - b[0]); // 按开始时间排序
 
             if (sponsorSegments.length === 0) {
@@ -553,17 +581,21 @@ export default defineBackground(() => {
 
             // 获取bilibili视频原始长度（取第一个片段的videoDuration）
             const bilibiliVideoDuration = skipSegments[0]?.videoDuration;
-            
+
             if (bilibiliVideoDuration && youtubeVideoDuration) {
                 const durationDiff = Math.abs(bilibiliVideoDuration - youtubeVideoDuration);
-                
+
                 if (durationDiff <= 5) {
                     // 长度相近，YouTube可能未去sponsor，跳过处理
-                    console.log(`YouTube视频长度(${youtubeVideoDuration}s)与bilibili原始长度(${bilibiliVideoDuration}s)相近，跳过sponsor处理`);
+                    console.log(
+                        `YouTube视频长度(${youtubeVideoDuration}s)与bilibili原始长度(${bilibiliVideoDuration}s)相近，跳过sponsor处理`
+                    );
                     return danmakus;
                 }
-                
-                console.log(`YouTube视频长度(${youtubeVideoDuration}s)与bilibili原始长度(${bilibiliVideoDuration}s)差异较大，正常处理sponsor片段`);
+
+                console.log(
+                    `YouTube视频长度(${youtubeVideoDuration}s)与bilibili原始长度(${bilibiliVideoDuration}s)差异较大，正常处理sponsor片段`
+                );
             }
 
             console.log(`发现 ${sponsorSegments.length} 个广告片段，开始处理弹幕`);
@@ -578,12 +610,12 @@ export default defineBackground(() => {
                 const adjustedEndTime = endTime - totalRemovedTime;
 
                 // 移除广告片段时间范围内的弹幕
-                const filteredDanmakus = processedDanmakus.filter(danmaku => 
-                    danmaku.time < adjustedStartTime || danmaku.time >= adjustedEndTime
+                const filteredDanmakus = processedDanmakus.filter(
+                    (danmaku) => danmaku.time < adjustedStartTime || danmaku.time >= adjustedEndTime
                 );
 
                 // 将广告片段之后的弹幕时间轴向前偏移
-                const adjustedDanmakus = filteredDanmakus.map(danmaku => {
+                const adjustedDanmakus = filteredDanmakus.map((danmaku) => {
                     if (danmaku.time >= adjustedEndTime) {
                         return {
                             ...danmaku,
@@ -597,8 +629,10 @@ export default defineBackground(() => {
                 totalRemovedTime += segmentDuration;
             }
 
-            console.log(`广告片段处理完成，移除了 ${danmakus.length - processedDanmakus.length} 条弹幕，总计移除时长: ${totalRemovedTime.toFixed(2)}秒`);
-            
+            console.log(
+                `广告片段处理完成，移除了 ${danmakus.length - processedDanmakus.length} 条弹幕，总计移除时长: ${totalRemovedTime.toFixed(2)}秒`
+            );
+
             return processedDanmakus;
         } catch (error) {
             console.error('处理广告片段时出错:', error);
@@ -670,7 +704,11 @@ export default defineBackground(() => {
             formattedDanmakus.sort((a, b) => a.time - b.time);
 
             // 移除广告片段弹幕
-            const processedDanmakus = await removeAdSegments(formattedDanmakus, bvid, youtubeVideoDuration);
+            const processedDanmakus = await removeAdSegments(
+                formattedDanmakus,
+                bvid,
+                youtubeVideoDuration
+            );
 
             // 统计weight分布（用于调试）
             // const weightStats = {};
@@ -1203,7 +1241,19 @@ export default defineBackground(() => {
 
     // 监听来自popup的消息
     browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
-        if (request.type === 'downloadDanmaku') {
+        if (request.type === 'updateGlobalState') {
+            // 处理全局状态更新
+            (async () => {
+                try {
+                    await updateExtensionIcon(request.enabled);
+                    sendResponse({ success: true });
+                } catch (error) {
+                    console.error('更新全局状态失败:', error);
+                    sendResponse({ success: false, error: error.message });
+                }
+            })();
+            return true; // 保持消息通道开启
+        } else if (request.type === 'downloadDanmaku') {
             downloadAllDanmaku(request.bvid, request.youtubeVideoDuration)
                 .then(async (data) => {
                     // 保存弹幕数据
@@ -1240,7 +1290,11 @@ export default defineBackground(() => {
             return true; // 保持消息通道开启
         } else if (request.type === 'searchBilibiliVideo') {
             // 新增：B站视频搜索
-            searchBilibiliVideo(request.bilibiliUID, request.videoTitle, request.youtubeVideoDuration)
+            searchBilibiliVideo(
+                request.bilibiliUID,
+                request.videoTitle,
+                request.youtubeVideoDuration
+            )
                 .then((result) => {
                     sendResponse(result);
                 })

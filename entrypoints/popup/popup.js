@@ -1,6 +1,53 @@
 // 引入频道关联管理工具
 import { channelAssociation, ChannelAssociationManager } from '../../utils/channelAssociation.js';
 
+// 全局开关相关函数
+async function getPluginGlobalState() {
+    const result = await browser.storage.local.get('pluginGlobalEnabled');
+    return result.pluginGlobalEnabled !== false; // 默认为启用状态
+}
+
+async function setPluginGlobalState(enabled) {
+    await browser.storage.local.set({ pluginGlobalEnabled: enabled });
+
+    // 通知background script更新图标
+    browser.runtime
+        .sendMessage({
+            type: 'updateGlobalState',
+            enabled: enabled
+        })
+        .catch((error) => console.log('通知background更新图标失败:', error));
+
+    // 更新UI状态
+    updatePluginUIState(enabled);
+
+    // 通知所有YouTube标签页插件状态变化
+    const tabs = await browser.tabs.query({ url: '*://*.youtube.com/*' });
+    for (const tab of tabs) {
+        browser.tabs
+            .sendMessage(tab.id, {
+                type: 'globalStateChanged',
+                enabled: enabled
+            })
+            .catch((error) => console.log('通知标签页状态变化失败:', error));
+    }
+}
+
+function updatePluginUIState(enabled) {
+    const mainContainer = document.getElementById('main-container');
+    const globalToggle = document.getElementById('global-toggle');
+
+    if (globalToggle) {
+        globalToggle.checked = enabled;
+    }
+
+    if (enabled) {
+        mainContainer.classList.remove('plugin-disabled');
+    } else {
+        mainContainer.classList.add('plugin-disabled');
+    }
+}
+
 // 获取当前标签页信息
 async function getCurrentTab() {
     const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
@@ -1243,7 +1290,14 @@ async function downloadDanmakuFromBV(bvid, youtubeVideoId = null) {
             console.log('获取YouTube视频长度失败:', error);
         }
 
-        console.log('下载弹幕 - BVID:', bvid, 'YouTube视频ID:', youtubeVideoId, 'YouTube视频长度:', youtubeVideoDuration);
+        console.log(
+            '下载弹幕 - BVID:',
+            bvid,
+            'YouTube视频ID:',
+            youtubeVideoId,
+            'YouTube视频长度:',
+            youtubeVideoDuration
+        );
 
         showStatus('正在下载弹幕...', 'loading');
 
@@ -1439,6 +1493,26 @@ document.addEventListener('DOMContentLoaded', async () => {
     // 如果不是YouTube页面，不需要执行后续的初始化逻辑
     if (!isYouTubePage) {
         return;
+    }
+
+    // 初始化全局开关状态
+    const globalEnabled = await getPluginGlobalState();
+    updatePluginUIState(globalEnabled);
+
+    // 绑定全局开关事件
+    const globalToggle = document.getElementById('global-toggle');
+    if (globalToggle) {
+        globalToggle.addEventListener('change', async () => {
+            const enabled = globalToggle.checked;
+            await setPluginGlobalState(enabled);
+
+            // 显示状态信息
+            if (enabled) {
+                showStatus('插件已启用', 'success');
+            } else {
+                showStatus('插件已禁用', 'info');
+            }
+        });
     }
 
     await loadSettings();
