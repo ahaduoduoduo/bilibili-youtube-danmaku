@@ -1495,7 +1495,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
     }
 
-    // 立即设置全局开关状态，避免动画
+    // 优雅地初始化所有开关状态，避免动画
+    const mainContainer = document.getElementById('main-container');
+    mainContainer.classList.add('no-animation');
+
+    // 初始化全局开关状态
     const globalToggle = document.getElementById('global-toggle');
     const globalEnabled = await getPluginGlobalState();
     if (globalToggle) {
@@ -1520,6 +1524,11 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     await loadSettings();
     await checkCurrentPageDanmaku();
+
+    // 所有初始化完成后，启用动画
+    setTimeout(() => {
+        mainContainer.classList.remove('no-animation');
+    }, 50); // 短暂延迟确保所有状态都已设置
 
     // 获取并显示页面信息
     const pageInfo = await getPageInfo();

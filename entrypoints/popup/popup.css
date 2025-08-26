@@ -117,6 +117,12 @@ h1 {
     border-radius: 26px;
 }
 
+/* 禁用初始化时的动画 */
+.no-animation .toggle-slider,
+.no-animation .toggle-slider:before {
+    transition: none !important;
+}
+
 .toggle-slider:before {
     position: absolute;
     content: '';
