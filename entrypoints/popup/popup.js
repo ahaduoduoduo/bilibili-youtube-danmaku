@@ -1,5 +1,12 @@
 // 引入频道关联管理工具
 import { channelAssociation, ChannelAssociationManager } from '../../utils/channelAssociation.js';
+import {
+    getExtensionEnabled,
+    setExtensionEnabled,
+    applyNetworkAndTimerGuards,
+    applyStorageGuards,
+    updateExtensionIcon
+} from '../../utils/globalToggle.js';
 
 // 获取当前标签页信息
 async function getCurrentTab() {
@@ -128,6 +135,26 @@ function showStatus(message, type = 'loading') {
         setTimeout(() => {
             statusBar.classList.remove('show');
         }, 3000);
+    }
+}
+
+// 切换弹窗UI的启用/禁用状态（不影响全局开关本身）
+function setPopupEnabledUI(enabled) {
+    try {
+        const mainContainer = document.getElementById('main-container');
+        const simpleContainer = document.getElementById('simple-container');
+        [mainContainer, simpleContainer].forEach((el) => {
+            if (!el) return;
+            if (enabled) {
+                el.classList.remove('disabled');
+                el.removeAttribute('aria-disabled');
+            } else {
+                el.classList.add('disabled');
+                el.setAttribute('aria-disabled', 'true');
+            }
+        });
+    } catch (e) {
+        console.error('Error in setPopupEnabledUI:', e);
     }
 }
 
@@ -1243,7 +1270,14 @@ async function downloadDanmakuFromBV(bvid, youtubeVideoId = null) {
             console.log('获取YouTube视频长度失败:', error);
         }
 
-        console.log('下载弹幕 - BVID:', bvid, 'YouTube视频ID:', youtubeVideoId, 'YouTube视频长度:', youtubeVideoDuration);
+        console.log(
+            '下载弹幕 - BVID:',
+            bvid,
+            'YouTube视频ID:',
+            youtubeVideoId,
+            'YouTube视频长度:',
+            youtubeVideoDuration
+        );
 
         showStatus('正在下载弹幕...', 'loading');
 
@@ -1346,10 +1380,42 @@ browser.runtime
         console.log('通知background失败:', error);
     });
 
+// 控制开关动画：仅在用户交互时启用
+let toggleAnimationTimeout = null;
+function triggerToggleAnimation() {
+    try {
+        document.body.classList.add('toggle-animate');
+        if (toggleAnimationTimeout) clearTimeout(toggleAnimationTimeout);
+        toggleAnimationTimeout = setTimeout(() => {
+            document.body.classList.remove('toggle-animate');
+            toggleAnimationTimeout = null;
+        }, 300);
+    } catch (e) {}
+}
+
+function attachToggleAnimationHandlers(inputEl) {
+    if (!inputEl) return;
+    const labelEl = inputEl.closest('label.toggle');
+    const pointerTarget = labelEl || inputEl;
+    try {
+        pointerTarget.addEventListener('pointerdown', triggerToggleAnimation);
+    } catch (e) {
+        try {
+            pointerTarget.addEventListener('mousedown', triggerToggleAnimation);
+        } catch (e2) {}
+    }
+    inputEl.addEventListener('keydown', (e) => {
+        const key = e.key || e.code;
+        if (key === ' ' || key === 'Spacebar' || key === 'Space' || key === 'Enter') {
+            triggerToggleAnimation();
+        }
+    });
+}
+
 // 检查是否为YouTube页面并切换界面
 async function checkPageTypeAndToggleUI() {
     const tab = await getCurrentTab();
-    const isYouTubePage = tab && tab.url && tab.url.includes('youtube.com');
+    const isYouTubePage = tab && tab.url && /:\/\/(?:www\.)?youtube\.com\/watch/.test(tab.url);
 
     const simpleContainer = document.getElementById('simple-container');
     const mainContainer = document.getElementById('main-container');
@@ -1427,6 +1493,51 @@ function openYouTube() {
 
 // 初始化
 document.addEventListener('DOMContentLoaded', async () => {
+    // Initialize global toggle UI
+    try {
+        const toggleEl = document.getElementById('globalToggle');
+        if (toggleEl) {
+            const enabled = await getExtensionEnabled();
+            toggleEl.checked = !!enabled;
+            attachToggleAnimationHandlers(toggleEl);
+            applyNetworkAndTimerGuards(!enabled);
+            applyStorageGuards(!enabled);
+            updateExtensionIcon(enabled);
+            setPopupEnabledUI(!!enabled);
+            toggleEl.addEventListener('change', async () => {
+                const enabledNow = !!toggleEl.checked;
+                await setExtensionEnabled(enabledNow);
+                try {
+                    await browser.runtime.sendMessage({
+                        type: 'EXTENSION_GLOBAL_TOGGLE',
+                        enabled: enabledNow
+                    });
+                } catch (e) {}
+                applyNetworkAndTimerGuards(!enabledNow);
+                applyStorageGuards(!enabledNow);
+                updateExtensionIcon(enabledNow);
+                setPopupEnabledUI(enabledNow);
+                if (enabledNow) {
+                    // 重新启用后，刷新一次以完成全部初始化
+                    window.location.reload();
+                }
+                if (!enabledNow) {
+                    // Stop further initialization when disabled
+                    // Optionally, we could close the popup or simply return.
+                }
+            });
+            // If disabled at load, stop further initialization
+            if (!enabled) {
+                // 仍然根据页面类型切换界面，并初始化社交图标
+                try {
+                    await checkPageTypeAndToggleUI();
+                    await initSocialIcons();
+                } catch (e) {}
+                return;
+            }
+        }
+    } catch (e) {}
+
     // 首先检查页面类型并切换界面
     const isYouTubePage = await checkPageTypeAndToggleUI();
 
@@ -1442,6 +1553,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
 
     await loadSettings();
+    attachToggleAnimationHandlers(document.getElementById('enable-danmaku'));
     await checkCurrentPageDanmaku();
 
     // 获取并显示页面信息
