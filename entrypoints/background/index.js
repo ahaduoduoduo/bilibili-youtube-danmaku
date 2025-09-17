@@ -1486,6 +1486,15 @@ export default defineBackground(() => {
 
             sendResponse({ success: true });
             return true;
+        } else if (request.type === 'clearTabCache') {
+            // 清除指定标签页的缓存
+            console.log('清除标签页缓存:', request.tabId);
+            if (request.tabId) {
+                clearTabPageState(request.tabId);
+            }
+
+            sendResponse({ success: true });
+            return true;
         } else if (request.type === 'pageInfoUpdated') {
             // 页面信息更新通知
             console.log('页面信息更新:', request.pageInfo.videoId);
@@ -1515,15 +1524,22 @@ export default defineBackground(() => {
                     const cachedState = getTabPageState(activeTab.id);
 
                     if (cachedState) {
-                        // 验证缓存的URL是否与当前标签页匹配
+                        // 验证缓存的URL和视频ID是否与当前标签页匹配
                         if (cachedState.url === activeTab.url) {
-                            console.log('使用background缓存的页面信息');
-                            sendResponse({
-                                success: true,
-                                data: cachedState,
-                                fromCache: true
-                            });
-                            return;
+                            // 进一步验证视频ID是否匹配
+                            const currentVideoId = activeTab.url.match(/[?&]v=([^&]+)/)?.[1];
+                            if (cachedState.videoId === currentVideoId) {
+                                console.log('使用background缓存的页面信息');
+                                sendResponse({
+                                    success: true,
+                                    data: cachedState,
+                                    fromCache: true
+                                });
+                                return;
+                            } else {
+                                console.log('缓存的视频ID与当前页面不匹配，清除过期状态');
+                                clearTabPageState(activeTab.id);
+                            }
                         } else {
                             console.log('缓存的URL不匹配，清除过期状态');
                             clearTabPageState(activeTab.id);

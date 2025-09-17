@@ -608,13 +608,13 @@ export default defineContentScript({
 
                 console.log('视频切换:', { from: oldVideoId, to: videoId });
 
-                // 立即清除旧的页面信息
+                // 立即清除旧的页面信息和缓存
                 currentPageInfo = null;
                 if (oldVideoId) {
                     pageInfoCache.delete(oldVideoId);
                 }
 
-                // 通知background script页面切换
+                // 通知background script页面切换，并请求清理对应标签页的缓存
                 browser.runtime
                     .sendMessage({
                         type: 'pageChanged',
