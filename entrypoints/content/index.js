@@ -589,6 +589,105 @@ export default defineContentScript({
             }
         }
 
+        // 页面信息监控器
+        let pageInfoMonitor = null;
+        let lastKnownPageInfo = null;
+        let monitoringRunCount = 0;
+
+        // 启动页面信息持续监控
+        function startPageInfoMonitoring() {
+            console.log('启动页面信息持续监控');
+
+            // 停止现有的监控器防止重复
+            if (pageInfoMonitor) {
+                clearInterval(pageInfoMonitor);
+                pageInfoMonitor = null;
+            }
+
+            // 重置运行计数
+            monitoringRunCount = 0;
+
+            pageInfoMonitor = setInterval(async () => {
+                monitoringRunCount++;
+                console.log(`页面信息监控运行第 ${monitoringRunCount} 次`);
+
+                // 运行3次后自动停止
+                if (monitoringRunCount >= 3) {
+                    console.log('页面信息监控已运行3次，自动停止');
+                    stopPageInfoMonitoring();
+                    return;
+                }
+                try {
+                    const currentUrl = window.location.href;
+                    const videoId = getVideoId();
+
+                    // 如果不在YouTube视频页面，停止监控
+                    if (!videoId || !currentUrl.includes('youtube.com/watch')) {
+                        console.log('不在YouTube视频页面，停止监控');
+                        stopPageInfoMonitoring();
+                        return;
+                    }
+
+                    // 检查是否需要更新页面信息
+                    const needsUpdate =
+                        !lastKnownPageInfo ||
+                        lastKnownPageInfo.videoId !== videoId ||
+                        lastKnownPageInfo.url !== currentUrl ||
+                        !lastKnownPageInfo.channel ||
+                        !lastKnownPageInfo.channel.success ||
+                        !lastKnownPageInfo.channel.channelId;
+
+                    if (needsUpdate) {
+                        console.log('检测到页面信息需要更新:', {
+                            videoId,
+                            lastKnownVideoId: lastKnownPageInfo?.videoId,
+                            urlChanged: lastKnownPageInfo?.url !== currentUrl,
+                            noChannelInfo: !lastKnownPageInfo?.channel?.success
+                        });
+
+                        // 强制更新页面信息
+                        currentPageInfo = null;
+                        pageInfoCache.delete(videoId);
+
+                        await updateCurrentPageInfo();
+
+                        if (currentPageInfo) {
+                            lastKnownPageInfo = { ...currentPageInfo };
+
+                            // 立即通知background更新
+                            browser.runtime
+                                .sendMessage({
+                                    type: 'pageInfoUpdated',
+                                    pageInfo: currentPageInfo
+                                })
+                                .catch((error) => console.log('通知页面信息更新失败:', error));
+                        }
+                    }
+                } catch (error) {
+                    console.error('页面信息监控出错:', error);
+                    // 发生错误时停止监控，避免持续错误
+                    if (error.message && (
+                        error.message.includes('Extension context invalidated') ||
+                        error.message.includes('Could not establish connection') ||
+                        error.message.includes('The message port closed')
+                    )) {
+                        console.log('扩展上下文失效或连接断开，停止监控');
+                        stopPageInfoMonitoring();
+                    }
+                }
+            }, 2000); // 每2秒检查一次
+        }
+
+        // 停止页面信息监控
+        function stopPageInfoMonitoring() {
+            if (pageInfoMonitor) {
+                clearInterval(pageInfoMonitor);
+                pageInfoMonitor = null;
+                monitoringRunCount = 0;
+                console.log('停止页面信息监控');
+            }
+        }
+
         // 监听URL变化
         let lastUrl = location.href;
         new MutationObserver(() => {
@@ -610,9 +709,12 @@ export default defineContentScript({
 
                 // 立即清除旧的页面信息
                 currentPageInfo = null;
+                lastKnownPageInfo = null; // 清除监控器的记录
                 if (oldVideoId) {
                     pageInfoCache.delete(oldVideoId);
                 }
+
+                console.log('已清除页面信息缓存');
 
                 // 通知background script页面切换
                 browser.runtime
@@ -623,6 +725,9 @@ export default defineContentScript({
                         url: window.location.href
                     })
                     .catch((error) => console.log('通知页面切换失败:', error));
+
+                // 重启页面信息监控
+                startPageInfoMonitoring();
 
                 // 延迟初始化，等待页面加载
                 setTimeout(async () => {
@@ -689,6 +794,8 @@ export default defineContentScript({
                         });
                     }
                 })();
+
+                return true;
             }
 
             return true; // 保持消息通道开启
@@ -864,10 +971,39 @@ export default defineContentScript({
         // 页面加载完成后初始化
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', () => {
-                setTimeout(initDanmakuEngine, 1000);
+                setTimeout(() => {
+                    initDanmakuEngine();
+                    startPageInfoMonitoring(); // 启动页面信息监控
+                }, 1000);
             });
         } else {
-            setTimeout(initDanmakuEngine, 1000);
+            setTimeout(() => {
+                initDanmakuEngine();
+                startPageInfoMonitoring(); // 启动页面信息监控
+            }, 1000);
         }
+
+        // 页面卸载时清理资源
+        window.addEventListener('beforeunload', () => {
+            console.log('页面卸载，清理监控器');
+            stopPageInfoMonitoring();
+            stopAdStatusMonitoring();
+        });
+
+        // 可见性变化时的处理
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'hidden') {
+                console.log('页面隐藏，暂停监控器');
+                stopPageInfoMonitoring();
+            } else if (document.visibilityState === 'visible') {
+                console.log('页面可见，恢复监控器');
+                // 延迟重启，等待页面稳定
+                setTimeout(() => {
+                    if (window.location.href.includes('youtube.com/watch')) {
+                        startPageInfoMonitoring();
+                    }
+                }, 1000);
+            }
+        });
     }
 });

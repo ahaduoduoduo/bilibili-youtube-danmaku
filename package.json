@@ -1,6 +1,6 @@
 {
     "name": "B2Y - YouTube 同步显示 Bilibili 弹幕",
-    "version": "1.1.5",
+    "version": "1.1.6",
     "description": "自动将Bilibili的弹幕同步显示在YouTube视频上",
     "main": "background/background.js",
     "scripts": {
