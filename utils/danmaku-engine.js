@@ -176,9 +176,9 @@ class DanmakuEngine {
         this.video.addEventListener('seeking', () => {
             const currentTime = this.video.currentTime;
             let timeDiff = 0;
-            if(this.pauseTime > 0) {
+            if (this.pauseTime > 0) {
                 timeDiff = Math.abs(currentTime - this.pauseTime);
-            }else{
+            } else {
                 timeDiff = Math.abs(currentTime - this.lastVideoTime);
             }
             console.log('时间差', timeDiff);
@@ -213,7 +213,7 @@ class DanmakuEngine {
             // 重置标记
             this.isRealSeeking = false;
         });
-        
+
         // 监听播放速度变化
         this.video.addEventListener('ratechange', () => {
             this.handleSpeedChange(this.video.playbackRate);
@@ -274,20 +274,20 @@ class DanmakuEngine {
 
     // 更新所有动画的速度
     updateAnimationSpeeds() {
-        this.tracks.forEach(track => {
-            track.items.forEach(item => {
+        this.tracks.forEach((track) => {
+            track.items.forEach((item) => {
                 if (item.animation) {
                     // 计算新的duration
                     const newDuration = item.baseDuration / this.settings.speed;
-                    
+
                     // 获取当前进度
                     const currentTime = item.animation.currentTime || 0;
                     const oldDuration = item.animation.effect.getTiming().duration;
                     const progress = currentTime / oldDuration;
-                    
+
                     // 更新动画timing
                     item.animation.effect.updateTiming({ duration: newDuration });
-                    
+
                     // 保持相同的进度
                     item.animation.currentTime = progress * newDuration;
                 }
@@ -321,16 +321,16 @@ class DanmakuEngine {
         if (!this.settings.enabled) return;
 
         this.isStarted = true;
-        
+
         // 恢复所有弹幕动画
-        this.tracks.forEach(track => {
-            track.items.forEach(item => {
+        this.tracks.forEach((track) => {
+            track.items.forEach((item) => {
                 if (item.animation && item.animation.playState === 'paused') {
                     item.animation.play();
                 }
             });
         });
-        
+
         // 启动弹幕发射器
         this.startEmitting();
     }
@@ -343,13 +343,13 @@ class DanmakuEngine {
         if (this.cleanupInterval) {
             clearInterval(this.cleanupInterval);
         }
-        
+
         // 使用requestAnimationFrame获得最高帧率
         this.emittingFrameId = null;
         this.cleanupFrameId = null;
         this.lastEmitTime = 0;
         this.lastCleanupTime = 0;
-        
+
         const emitLoop = (currentTime) => {
             if (this.isStarted && this.video && !this.video.paused) {
                 // 控制发射频率到每0.5秒一次
@@ -357,19 +357,19 @@ class DanmakuEngine {
                     this.checkAndEmitDanmakus();
                     this.lastEmitTime = currentTime;
                 }
-                
+
                 // 控制清理频率到每0.5秒一次
                 if (currentTime - this.lastCleanupTime >= 500) {
                     this.cleanup();
                     this.lastCleanupTime = currentTime;
                 }
             }
-            
+
             if (this.isStarted) {
                 this.emittingFrameId = requestAnimationFrame(emitLoop);
             }
         };
-        
+
         this.emittingFrameId = requestAnimationFrame(emitLoop);
     }
 
@@ -409,7 +409,7 @@ class DanmakuEngine {
 
     pause() {
         this.isStarted = false;
-        
+
         // 停止发射器
         if (this.emittingInterval) {
             clearInterval(this.emittingInterval);
@@ -423,10 +423,10 @@ class DanmakuEngine {
             cancelAnimationFrame(this.emittingFrameId);
             this.emittingFrameId = null;
         }
-        
+
         // 暂停所有弹幕动画
-        this.tracks.forEach(track => {
-            track.items.forEach(item => {
+        this.tracks.forEach((track) => {
+            track.items.forEach((item) => {
                 if (item.animation && item.animation.playState === 'running') {
                     item.animation.pause();
                 }
@@ -436,8 +436,8 @@ class DanmakuEngine {
 
     clear() {
         // 取消所有动画并清理DOM
-        this.tracks.forEach(track => {
-            track.items.forEach(item => {
+        this.tracks.forEach((track) => {
+            track.items.forEach((item) => {
                 if (item.animation) {
                     item.animation.cancel();
                 }
@@ -447,7 +447,7 @@ class DanmakuEngine {
             });
             track.items = [];
         });
-        
+
         // 清空舞台
         this.stage.innerHTML = '';
     }
@@ -465,25 +465,25 @@ class DanmakuEngine {
     // 处理播放速度变化
     handleSpeedChange(newRate) {
         console.log(`播放速度变化: ${newRate}x`);
-        
+
         // Web Animations API实现：需要重新计算所有弹幕的时间进度
         // 保持弹幕视觉速度恒定，但同步到新的播放速度
-        this.tracks.forEach(track => {
-            track.items.forEach(item => {
+        this.tracks.forEach((track) => {
+            track.items.forEach((item) => {
                 if (item.animation && item.danmaku) {
                     // 重新计算弹幕应该的进度
                     const currentVideoTime = this.video.currentTime + this.settings.timeOffset;
                     const visualElapsed = (currentVideoTime - item.danmaku.time) / newRate;
                     const progressMs = Math.max(0, visualElapsed * 1000);
                     const duration = item.animation.effect.getTiming().duration;
-                    
+
                     if (progressMs <= duration) {
                         item.animation.currentTime = progressMs;
                     }
                 }
             });
         });
-        
+
         console.log('弹幕位置已根据新播放速度重新计算');
     }
 
@@ -555,31 +555,34 @@ class DanmakuEngine {
         // 获取弹幕宽度
         const danmakuWidth = elem.offsetWidth;
         const stageWidth = this.stage.offsetWidth;
-        
-        // 计算动画参数  
+
+        // 计算动画参数
         const baseDuration = 8000;
         const adjustedDuration = baseDuration / this.settings.speed;
         const currentPlaybackRate = this.video?.playbackRate || 1.0;
-        
+
         // 使用Web Animations API创建动画
-        const animation = elem.animate([
+        const animation = elem.animate(
+            [
+                {
+                    transform: `translateX(${stageWidth}px)`,
+                    offset: 0
+                },
+                {
+                    transform: `translateX(-${danmakuWidth}px)`,
+                    offset: 1
+                }
+            ],
             {
-                transform: `translateX(${stageWidth}px)`,
-                offset: 0
-            },
-            {
-                transform: `translateX(-${danmakuWidth}px)`,
-                offset: 1
+                duration: adjustedDuration,
+                easing: 'linear',
+                fill: 'forwards'
             }
-        ], {
-            duration: adjustedDuration,
-            easing: 'linear',
-            fill: 'forwards'
-        });
-        
+        );
+
         // 不设置playbackRate，让弹幕速度保持恒定
         // animation.playbackRate = currentPlaybackRate; // 移除
-        
+
         // 设置动画进度到已经过的时间
         // 弹幕视觉速度保持恒定，需要根据播放速度反算实际经过时间
         const visualElapsed = elapsed / currentPlaybackRate; // 视觉上的经过时间
@@ -612,7 +615,7 @@ class DanmakuEngine {
         elem.style.whiteSpace = 'nowrap';
         elem.style.pointerEvents = 'none';
         elem.style.zIndex = '9999';
-        
+
         // 强制硬件加速和高性能
         elem.style.willChange = 'transform';
         elem.style.transform = 'translate3d(0, 0, 0)';
@@ -629,28 +632,31 @@ class DanmakuEngine {
         // 获取弹幕宽度
         const danmakuWidth = elem.offsetWidth;
         const stageWidth = this.stage.offsetWidth;
-        
+
         // 计算动画参数
         const baseDuration = 8000; // 基础8秒
         const adjustedDuration = baseDuration / this.settings.speed;
         // 移除playbackRate的影响，让弹幕速度保持恒定
-        
+
         // 使用Web Animations API创建动画
-        const animation = elem.animate([
+        const animation = elem.animate(
+            [
+                {
+                    transform: `translateX(${stageWidth}px)`,
+                    offset: 0
+                },
+                {
+                    transform: `translateX(-${danmakuWidth}px)`,
+                    offset: 1
+                }
+            ],
             {
-                transform: `translateX(${stageWidth}px)`,
-                offset: 0
-            },
-            {
-                transform: `translateX(-${danmakuWidth}px)`,
-                offset: 1
+                duration: adjustedDuration,
+                easing: 'linear',
+                fill: 'forwards'
             }
-        ], {
-            duration: adjustedDuration,
-            easing: 'linear',
-            fill: 'forwards'
-        });
-        
+        );
+
         // 不设置playbackRate，让弹幕速度保持恒定
         // animation.playbackRate = currentPlaybackRate; // 移除
 
@@ -682,11 +688,11 @@ class DanmakuEngine {
 
                 // 计算考虑播放速度的视觉进度
                 const visualElapsed = this.calculateVisualElapsed(
-                    currentVideoTime, 
-                    item.danmaku.time, 
+                    currentVideoTime,
+                    item.danmaku.time,
                     playbackRate
                 );
-                
+
                 const duration = item.animation.effect.getTiming().duration / 1000; // 转换为秒
                 const progress = Math.min(visualElapsed / duration, 1);
 
@@ -727,7 +733,7 @@ class DanmakuEngine {
 
                 // 检查动画状态
                 const animationState = item.animation.playState;
-                
+
                 // 动画完成或被取消时移除
                 if (animationState === 'finished' || animationState === 'idle') {
                     if (item.elem) item.elem.remove();
@@ -758,7 +764,7 @@ class DanmakuEngine {
     destroy() {
         this.pause();
         this.clear();
-        
+
         // 清理所有定时器和动画帧
         if (this.emittingInterval) {
             clearInterval(this.emittingInterval);
@@ -772,7 +778,7 @@ class DanmakuEngine {
             cancelAnimationFrame(this.emittingFrameId);
             this.emittingFrameId = null;
         }
-        
+
         if (this.stage) {
             this.stage.remove();
         }

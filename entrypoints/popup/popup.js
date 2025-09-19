@@ -751,7 +751,8 @@ function displayChannelInfo(pageInfo) {
     document.getElementById('channel-name').textContent = isBangumiChannel
         ? '哔哩哔哩动画'
         : channel.channelName || '未知频道';
-    document.getElementById('channel-id').textContent = `ID: ${channel.channelId || '未知'}`;
+    document.getElementById('channel-id').textContent =
+        `ID: ${decodeURIComponent(channel.channelId || '未知')}`;
 
     channelInfoDiv.style.display = 'block';
 
@@ -1243,7 +1244,14 @@ async function downloadDanmakuFromBV(bvid, youtubeVideoId = null) {
             console.log('获取YouTube视频长度失败:', error);
         }
 
-        console.log('下载弹幕 - BVID:', bvid, 'YouTube视频ID:', youtubeVideoId, 'YouTube视频长度:', youtubeVideoDuration);
+        console.log(
+            '下载弹幕 - BVID:',
+            bvid,
+            'YouTube视频ID:',
+            youtubeVideoId,
+            'YouTube视频长度:',
+            youtubeVideoDuration
+        );
 
         showStatus('正在下载弹幕...', 'loading');
 

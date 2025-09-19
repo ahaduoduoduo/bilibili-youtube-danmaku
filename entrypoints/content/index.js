@@ -666,11 +666,12 @@ export default defineContentScript({
                 } catch (error) {
                     console.error('页面信息监控出错:', error);
                     // 发生错误时停止监控，避免持续错误
-                    if (error.message && (
-                        error.message.includes('Extension context invalidated') ||
-                        error.message.includes('Could not establish connection') ||
-                        error.message.includes('The message port closed')
-                    )) {
+                    if (
+                        error.message &&
+                        (error.message.includes('Extension context invalidated') ||
+                            error.message.includes('Could not establish connection') ||
+                            error.message.includes('The message port closed'))
+                    ) {
                         console.log('扩展上下文失效或连接断开，停止监控');
                         stopPageInfoMonitoring();
                     }
