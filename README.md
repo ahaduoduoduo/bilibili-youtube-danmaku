@@ -235,3 +235,4 @@ bilibili-youtube-danmaku/
 
 ### [☕️支持我～](https://github.com/ahaduoduoduo/bilibili-youtube-danmaku/blob/main/DONATE.md)
 
+### [☕️看看我做的 Sora 去水印小工具](https://nosorawm.app/)
