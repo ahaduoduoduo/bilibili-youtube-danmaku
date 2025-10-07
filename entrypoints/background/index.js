@@ -2,6 +2,7 @@
 
 // 导入番剧处理模块
 import { searchBilibiliBangumi, findEpisodeByNumber, getBangumiEpisodeDetail } from './bangumi.js';
+import { getExtensionEnabled, applyNetworkAndTimerGuards, applyStorageGuards, forwardToggleToAllTabs, updateExtensionIcon } from '../../utils/globalToggle.js';
 // 引入protobuf解析器和OpenCC库
 import '../../lib/protobuf-parser.js';
 import '../../lib/opencc.min.js';
@@ -9,6 +10,47 @@ import '../../lib/opencc.min.js';
 export default defineBackground(() => {
     // 页面状态管理
     let tabPageStates = new Map(); // 存储每个标签页的页面状态
+    let extensionEnabled = true;
+    let cleanupIntervalId = null;
+
+    function scheduleCleanupInterval() {
+        if (cleanupIntervalId) return;
+        cleanupIntervalId = setInterval(cleanupExpiredPageStates, 60000); // 每分钟清理一次
+    }
+
+    function clearCleanupInterval() {
+        if (cleanupIntervalId) {
+            clearInterval(cleanupIntervalId);
+            cleanupIntervalId = null;
+        }
+    }
+
+    function updateGlobalEnabledState(enabled) {
+        extensionEnabled = !!enabled;
+        applyNetworkAndTimerGuards(!extensionEnabled);
+        applyStorageGuards(!extensionEnabled);
+        if (extensionEnabled) {
+            scheduleCleanupInterval();
+        } else {
+            clearCleanupInterval();
+        }
+        forwardToggleToAllTabs(extensionEnabled);
+        updateExtensionIcon(extensionEnabled);
+    }
+
+    // 初始化：加载总开关状态并应用守卫
+    getExtensionEnabled()
+        .then((enabled) => {
+            updateGlobalEnabledState(enabled);
+            if (enabled) {
+                // 延迟启动清理任务，避免启动早期竞争
+                setTimeout(() => scheduleCleanupInterval(), 100);
+            }
+        })
+        .catch(() => {
+            updateGlobalEnabledState(true);
+            setTimeout(() => scheduleCleanupInterval(), 100);
+        });
 
     // 页面状态管理函数
     function getTabPageState(tabId) {
@@ -43,8 +85,8 @@ export default defineBackground(() => {
         }
     }
 
-    // 定期清理过期状态
-    setInterval(cleanupExpiredPageStates, 60000); // 每分钟清理一次
+    // 定期清理过期状态（按总开关状态控制）
+    // 在初始化状态加载后再启动
 
     // 监听标签页关闭事件
     browser.tabs.onRemoved.addListener((tabId) => {
@@ -1192,17 +1234,33 @@ export default defineBackground(() => {
 
     // 扩展启动时清理过期数据
     browser.runtime.onStartup.addListener(() => {
-        console.log('浏览器启动，异步清理过期弹幕数据');
-        cleanupExpiredDanmaku();
+        console.log('浏览器启动');
+        if (extensionEnabled) {
+            console.log('异步清理过期弹幕数据');
+            cleanupExpiredDanmaku();
+        }
     });
 
     browser.runtime.onInstalled.addListener(() => {
-        console.log('扩展安装/更新，异步清理过期弹幕数据');
-        cleanupExpiredDanmaku();
+        console.log('扩展安装/更新');
+        if (extensionEnabled) {
+            console.log('异步清理过期弹幕数据');
+            cleanupExpiredDanmaku();
+        }
     });
 
     // 监听来自popup的消息
     browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
+        if (request && request.type === 'EXTENSION_GLOBAL_TOGGLE') {
+            updateGlobalEnabledState(!!request.enabled);
+            sendResponse({ success: true });
+            return true;
+        }
+
+        if (!extensionEnabled) {
+            sendResponse({ success: false, error: 'extension disabled' });
+            return true;
+        }
         if (request.type === 'downloadDanmaku') {
             downloadAllDanmaku(request.bvid, request.youtubeVideoDuration)
                 .then(async (data) => {
