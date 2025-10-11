@@ -41,7 +41,7 @@ jobs:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
             - name: 安装依赖
-              if: steps.check_release.outputs.exists == 'false'  
+              if: steps.check_release.outputs.exists == 'false'
               run: npm ci
 
             - name: 创建多浏览器扩展包
@@ -56,7 +56,7 @@ jobs:
                   # 构建 Chrome 版本
                   echo "🔨 构建 Chrome 扩展..."
                   npm run build:chrome
-                  
+
                   # 打包 Chrome 版本
                   cd .output/chrome-mv3
                   zip -r "../../$CHROME_PACKAGE" .
@@ -65,7 +65,7 @@ jobs:
                   # 构建 Firefox 版本  
                   echo "🔨 构建 Firefox 扩展..."
                   npm run build:firefox
-                  
+
                   # 打包 Firefox 版本
                   cd .output/firefox-mv2
                   zip -r "../../$FIREFOX_PACKAGE" .
@@ -74,7 +74,7 @@ jobs:
                   # 构建 Edge 版本
                   echo "🔨 构建 Edge 扩展..."
                   npm run build:edge
-                  
+
                   # 打包 Edge 版本
                   cd .output/edge-mv3
                   zip -r "../../$EDGE_PACKAGE" .
@@ -83,7 +83,7 @@ jobs:
                   # 构建 Safari 版本
                   echo "🔨 构建 Safari 扩展..."
                   npm run build:safari
-                  
+
                   # 打包 Safari 版本
                   cd .output/safari-mv2
                   zip -r "../../$SAFARI_PACKAGE" .
@@ -94,7 +94,7 @@ jobs:
                   echo "📦 Firefox: $FIREFOX_PACKAGE"
                   echo "📦 Edge: $EDGE_PACKAGE"
                   echo "📦 Safari: $SAFARI_PACKAGE"
-                  
+
                   echo "chrome_package=$CHROME_PACKAGE" >> $GITHUB_ENV
                   echo "firefox_package=$FIREFOX_PACKAGE" >> $GITHUB_ENV
                   echo "edge_package=$EDGE_PACKAGE" >> $GITHUB_ENV
