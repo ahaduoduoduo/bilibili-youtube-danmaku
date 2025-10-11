@@ -708,7 +708,7 @@ export default defineContentScript({
 
                 console.log('视频切换:', { from: oldVideoId, to: videoId });
 
-                // 立即清除旧的页面信息
+                // 立即清除旧的页面信息和缓存
                 currentPageInfo = null;
                 lastKnownPageInfo = null; // 清除监控器的记录
                 if (oldVideoId) {
