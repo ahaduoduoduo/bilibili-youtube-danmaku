@@ -1,6 +1,11 @@
 import './danmaku.css';
 import { channelAssociation } from '../../utils/channelAssociation.js';
 import DanmakuEngine from '../../utils/danmaku-engine.js';
+import {
+    getExtensionEnabled,
+    applyNetworkAndTimerGuards,
+    applyStorageGuards
+} from '../../utils/globalToggle.js';
 
 export default defineContentScript({
     matches: ['*://*.youtube.com/*'],
@@ -11,6 +16,8 @@ export default defineContentScript({
         let currentVideoId = null;
         let currentPageInfo = null;
         let pageInfoCache = new Map();
+        let extensionEnabled = true;
+        let urlObserver = null;
 
         // 获取YouTube视频ID
         function getVideoId() {
@@ -335,6 +342,9 @@ export default defineContentScript({
 
         // 初始化弹幕引擎
         async function initDanmakuEngine() {
+            if (!extensionEnabled) {
+                return;
+            }
             const container = findVideoContainer();
             if (!container) {
                 console.log('未找到视频容器');
@@ -589,15 +599,29 @@ export default defineContentScript({
             }
         }
 
-        // 监听URL变化
-        let lastUrl = location.href;
-        new MutationObserver(() => {
-            const url = location.href;
-            if (url !== lastUrl) {
-                lastUrl = url;
-                handleUrlChange();
+        // 监听URL变化（按开关控制）
+        function setupUrlObserver() {
+            if (urlObserver) return;
+            let lastUrl = location.href;
+            urlObserver = new MutationObserver(() => {
+                if (!extensionEnabled) return;
+                const url = location.href;
+                if (url !== lastUrl) {
+                    lastUrl = url;
+                    handleUrlChange();
+                }
+            });
+            urlObserver.observe(document, { subtree: true, childList: true });
+        }
+
+        function teardownUrlObserver() {
+            if (urlObserver) {
+                try {
+                    urlObserver.disconnect();
+                } catch (e) {}
+                urlObserver = null;
             }
-        }).observe(document, { subtree: true, childList: true });
+        }
 
         // 处理URL变化（增强版）
         function handleUrlChange() {
@@ -626,6 +650,7 @@ export default defineContentScript({
 
                 // 延迟初始化，等待页面加载
                 setTimeout(async () => {
+                    if (!extensionEnabled) return;
                     await initDanmakuEngine();
                     // 初始化完成后更新页面信息
                     await updateCurrentPageInfo();
@@ -861,13 +886,77 @@ export default defineContentScript({
             return hasAdElement;
         }
 
-        // 页面加载完成后初始化
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', () => {
-                setTimeout(initDanmakuEngine, 1000);
-            });
-        } else {
-            setTimeout(initDanmakuEngine, 1000);
+        function startEnabledFeatures() {
+            setupUrlObserver();
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', () => {
+                    if (!extensionEnabled) return;
+                    setTimeout(() => {
+                        if (!extensionEnabled) return;
+                        initDanmakuEngine();
+                    }, 1000);
+                });
+            } else {
+                if (!extensionEnabled) return;
+                setTimeout(() => {
+                    if (!extensionEnabled) return;
+                    initDanmakuEngine();
+                }, 1000);
+            }
         }
+
+        function teardownDisabledState() {
+            // 停止广告监控
+            try {
+                stopAdStatusMonitoring();
+            } catch (e) {
+                console.error('Error stopping ad status monitoring:', e);
+            }
+            // 销毁引擎
+            if (danmakuEngine) {
+                try {
+                    danmakuEngine.destroy();
+                } catch (e) {
+                    console.error('Error destroying danmaku engine:', e);
+                }
+                danmakuEngine = null;
+            }
+            teardownUrlObserver();
+        }
+
+        // 热切换监听（不占用消息通道）
+        browser.runtime.onMessage.addListener((request) => {
+            if (request && request.type === 'EXTENSION_GLOBAL_TOGGLE') {
+                extensionEnabled = !!request.enabled;
+                if (extensionEnabled) {
+                    // Re-enable: remove guards first, then start features
+                    applyNetworkAndTimerGuards(false);
+                    applyStorageGuards(false);
+                    startEnabledFeatures();
+                } else {
+                    // Disable: teardown first while clearInterval/clearTimeout still original
+                    teardownDisabledState();
+                    applyNetworkAndTimerGuards(true);
+                    applyStorageGuards(true);
+                }
+            }
+        });
+
+        // 启动时读取总开关
+        (async () => {
+            try {
+                const enabled = await getExtensionEnabled();
+                extensionEnabled = !!enabled;
+            } catch (e) {
+                extensionEnabled = true;
+            }
+            applyNetworkAndTimerGuards(!extensionEnabled);
+            applyStorageGuards(!extensionEnabled);
+            if (extensionEnabled) {
+                startEnabledFeatures();
+            } else {
+                teardownDisabledState();
+            }
+        })();
     }
 });

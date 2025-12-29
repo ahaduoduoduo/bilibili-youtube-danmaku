@@ -7,6 +7,13 @@
         <link rel="stylesheet" href="popup.css" />
     </head>
     <body>
+        <div class="toggle-row">
+            <label class="toggle">
+                <span class="toggle-label">全局开关</span>
+                <input type="checkbox" id="globalToggle" />
+                <span class="toggle-slider" aria-hidden="true"></span>
+            </label>
+        </div>
         <!-- 非YouTube页面的简化界面 -->
         <div class="simple-container" id="simple-container" style="display: none">
             <div class="simple-content">
@@ -97,9 +104,10 @@
 
             <div class="controls">
                 <div class="control-group">
-                    <label>
+                    <label class="toggle">
+                        <span class="toggle-label">弹幕开关</span>
                         <input type="checkbox" id="enable-danmaku" checked />
-                        启用弹幕
+                        <span class="toggle-slider" aria-hidden="true"></span>
                     </label>
                 </div>
 

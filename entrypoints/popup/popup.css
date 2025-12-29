@@ -58,6 +58,20 @@ body {
     padding: 16px;
 }
 
+/* Disabled state for containers when extension is off */
+#main-container.disabled,
+#simple-container.disabled {
+    opacity: 0.5;
+    filter: grayscale(0.2);
+    pointer-events: none;
+    user-select: none;
+}
+
+/* Always allow interacting with the global toggle row */
+.toggle-row {
+    pointer-events: auto;
+}
+
 h1 {
     margin: 0 0 16px 0;
     font-size: 18px;
@@ -619,6 +633,96 @@ h1 {
     margin-right: 6px;
 }
 
+/* Toggle switch */
+.toggle-row {
+    padding: 12px 16px;
+    background: #fff;
+    border-bottom: 1px solid #ddd;
+    display: flex;
+    align-items: center;
+}
+
+label.toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.toggle-row label.toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+}
+
+.control-group .toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+}
+
+.toggle input[type='checkbox'] {
+    position: absolute;
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggle-slider {
+    position: relative;
+    width: 44px;
+    height: 24px;
+    background: #d1d5db;
+    border-radius: 999px;
+    transition: background-color 0.2s ease;
+    box-sizing: border-box;
+}
+
+.toggle-slider::before {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 20px;
+    height: 20px;
+    background: #fff;
+    border-radius: 50%;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    transition: transform 0.2s ease;
+}
+
+.toggle input[type='checkbox']:checked + .toggle-slider {
+    background: #00a1d6;
+}
+
+.toggle input[type='checkbox']:checked + .toggle-slider::before {
+    transform: translateX(20px);
+}
+
+.toggle input[type='checkbox']:focus-visible + .toggle-slider {
+    outline: 2px solid #60a5fa;
+    outline-offset: 2px;
+}
+
+.toggle-label {
+    font-size: 14px;
+    color: #666;
+}
+
+.control-group label.toggle .toggle-label {
+    margin-left: 0;
+    font-size: 14px;
+    color: #666;
+}
+
+.toggle-row .toggle-label,
+.control-group .toggle .toggle-label {
+    flex: 1;
+}
+
 .control-group input[type='range'] {
     width: 85%;
     vertical-align: middle;
@@ -1020,6 +1124,24 @@ h1 {
         border-top: 1px solid #444;
     }
 
+    /* Toggle switch (dark) */
+    .toggle-row {
+        background: #2d2d2d;
+        border-bottom: 1px solid #444;
+    }
+    .toggle-slider {
+        background: #4b5563;
+    }
+    .toggle input[type='checkbox']:checked + .toggle-slider {
+        background: #00a1d6;
+    }
+    .toggle-label {
+        color: #b0b0b0;
+    }
+    .control-group label.toggle .toggle-label {
+        color: #b0b0b0;
+    }
+
     /* 时间轴偏移控制深色模式 */
     .time-offset-manual {
         background: #3a3a3a;
@@ -1059,4 +1181,21 @@ h1 {
 
 .search-item.user-item .search-item-cover img {
     border-radius: 50%;
+}
+
+/* 切换动画控制：默认禁用，仅在用户交互时启用 */
+.toggle-slider {
+    transition: none;
+}
+
+.toggle-slider::before {
+    transition: none;
+}
+
+body.toggle-animate .toggle-slider {
+    transition: background-color 0.2s ease;
+}
+
+body.toggle-animate .toggle-slider::before {
+    transition: transform 0.2s ease;
 }
