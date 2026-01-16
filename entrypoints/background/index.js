@@ -1106,7 +1106,13 @@ export default defineBackground(() => {
 
             // 打开popup窗口
             try {
-                await browser.action.openPopup();
+                if (browser?.action?.openPopup) {
+                    await browser.action.openPopup();
+                } else if (browser?.browserAction?.openPopup) {
+                    await browser.browserAction.openPopup();
+                } else {
+                    throw new Error('不支持自动打开popup');
+                }
                 console.log('popup窗口已打开，等待ready信号...');
             } catch (error) {
                 console.log('无法自动打开popup，可能需要用户手动点击:', error.message);
@@ -1142,7 +1148,13 @@ export default defineBackground(() => {
 
             // 打开popup窗口
             try {
-                await browser.action.openPopup();
+                if (browser?.action?.openPopup) {
+                    await browser.action.openPopup();
+                } else if (browser?.browserAction?.openPopup) {
+                    await browser.browserAction.openPopup();
+                } else {
+                    throw new Error('不支持自动打开popup');
+                }
                 console.log('popup窗口已打开，等待ready信号...');
             } catch (error) {
                 console.log('无法自动打开popup，可能需要用户手动点击:', error.message);
