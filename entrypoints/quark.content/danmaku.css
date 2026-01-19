@@ -1,0 +1,312 @@
+/* Quark 专用弹幕容器由 JS 创建，使用 fixed 定位 */
+/* 弹幕舞台样式 */
+.bilibili-danmaku-stage {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    overflow: hidden;
+}
+
+/* 弹幕文字样式 */
+.bilibili-danmaku-stage > div {
+    position: absolute;
+    color: #fff;
+    font-family: SimHei, 'Microsoft YaHei', Arial, sans-serif;
+    font-size: var(--danmaku-font-size, 24px);
+    line-height: 1.2;
+    padding: 2px 0;
+    white-space: nowrap;
+    font-weight: bold;
+    text-shadow:
+        -1px -1px 0 #000,
+        1px -1px 0 #000,
+        -1px 1px 0 #000,
+        1px 1px 0 #000,
+        0 0 2px #000;
+    pointer-events: none;
+    opacity: var(--danmaku-opacity, 1);
+    will-change: transform;
+    -webkit-transform: translateZ(0);
+    transform: translateZ(0);
+}
+
+/* 全屏模式下确保弹幕可见 */
+.vjs-fullscreen .bilibili-danmaku-stage {
+    z-index: 9999;
+}
+
+/* ==================== B站弹幕按钮和弹窗样式（模仿夸克播放历史） ==================== */
+
+/* B站弹幕按钮（固定定位，跟随播放历史按钮，样式与播放历史完全一致） */
+.qb-danmaku-btn {
+    position: fixed;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 21px;
+    color: rgb(82, 86, 94);
+    font-family: "PingFang SC", "Microsoft YaHei", miui, system-ui, -apple-system, sans-serif;
+    transition: color 0.2s;
+    z-index: 99999;
+    background: transparent;
+}
+
+.qb-danmaku-btn:hover {
+    color: #1890ff;
+}
+
+.qb-danmaku-icon {
+    width: 20px;
+    height: 20px;
+    color: #000;
+}
+
+.qb-danmaku-btn:hover .qb-danmaku-icon {
+    color: #1890ff;
+}
+
+.qb-danmaku-text {
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 21px;
+    margin-left: 12px;
+}
+
+/* 弹窗容器（与播放历史弹窗样式一致） */
+.qb-danmaku-popover {
+    position: fixed;
+    width: 360px;
+    background: #fff;
+    border-radius: 20px 20px 10px 10px;
+    box-shadow: rgba(0, 0, 0, 0.2) 0px 10px 40px 0px;
+    z-index: 999999;
+    font-family: "PingFang SC", "Microsoft YaHei", miui, system-ui, -apple-system, sans-serif;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(-8px);
+    transition: opacity 0.2s, visibility 0.2s, transform 0.2s;
+}
+
+.qb-danmaku-popover.qb-popover-visible {
+    opacity: 1;
+    visibility: visible;
+    transform: translateY(0);
+}
+
+/* 弹窗箭头（指向按钮的小三角形） */
+.qb-popover-arrow {
+    position: absolute;
+    top: -6px;
+    left: 30px;
+    width: 12px;
+    height: 12px;
+    background: #fff;
+    transform: rotate(45deg);
+    box-shadow: -2px -2px 4px rgba(0, 0, 0, 0.05);
+}
+
+/* 弹窗头部（标题 + 搜索框 + 搜索按钮在同一行） */
+.qb-popover-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 16px 20px;
+}
+
+.qb-popover-header-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: rgb(82, 86, 94);
+    flex-shrink: 0;
+}
+
+/* 搜索框（在头部内） */
+.qb-popover-search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+}
+
+.qb-popover-search input {
+    flex: 1;
+    height: 32px;
+    padding: 0 12px;
+    border: 1px solid #e5e5e5;
+    border-radius: 16px;
+    font-size: 13px;
+    outline: none;
+    background: #f5f5f5;
+    transition: border-color 0.2s, background 0.2s;
+}
+
+.qb-popover-search input:focus {
+    border-color: #1890ff;
+    background: #fff;
+}
+
+/* 搜索按钮（纯图标，与夸克图标按钮一致） */
+.qb-popover-search button {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background 0.2s;
+    flex-shrink: 0;
+}
+
+.qb-popover-search button:hover {
+    background: rgba(0, 0, 0, 0.05);
+}
+
+.qb-popover-search button svg {
+    width: 20px;
+    height: 20px;
+    color: rgb(82, 86, 94);
+}
+
+/* 弹窗内容区 */
+.qb-popover-content {
+    max-height: 320px;
+    overflow-y: auto;
+}
+
+.qb-popover-content::-webkit-scrollbar {
+    width: 4px;
+}
+
+.qb-popover-content::-webkit-scrollbar-track {
+    background: #f5f5f5;
+}
+
+.qb-popover-content::-webkit-scrollbar-thumb {
+    background: #ddd;
+    border-radius: 2px;
+}
+
+/* 列表项（与播放历史列表项一致） */
+.qb-popover-item {
+    display: flex;
+    gap: 12px;
+    padding: 10px 20px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.qb-popover-item:hover {
+    background: #f5f5f5;
+}
+
+/* 封面图容器 */
+.qb-popover-item-cover {
+    position: relative;
+    width: 96px;
+    height: 54px;
+    flex-shrink: 0;
+    border-radius: 4px;
+    overflow: hidden;
+    background: #f0f0f0;
+}
+
+.qb-popover-item-cover img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+/* 覆盖层（下载状态） */
+.qb-popover-item-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    color: #fff;
+    font-size: 11px;
+}
+
+.qb-popover-item-overlay.qb-overlay-success {
+    background: rgba(82, 196, 26, 0.85);
+}
+
+.qb-popover-item-overlay.qb-overlay-error {
+    background: rgba(255, 77, 79, 0.85);
+}
+
+.qb-success-icon, .qb-error-icon {
+    font-size: 18px;
+}
+
+/* 视频信息 */
+.qb-popover-item-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 4px;
+}
+
+.qb-popover-item-title {
+    font-size: 13px;
+    color: rgb(82, 86, 94);
+    line-height: 1.4;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.qb-popover-item-author {
+    font-size: 12px;
+    color: #999;
+}
+
+/* 加载和空状态 */
+.qb-popover-loading,
+.qb-popover-empty,
+.qb-popover-error {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 40px 16px;
+    color: #999;
+    font-size: 13px;
+}
+
+.qb-popover-error {
+    color: #ff4d4f;
+}
+
+/* 加载动画 */
+.qb-loading-spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid #eee;
+    border-top-color: #1890ff;
+    border-radius: 50%;
+    animation: qb-spin 0.8s linear infinite;
+}
+
+@keyframes qb-spin {
+    to { transform: rotate(360deg); }
+}

@@ -8,7 +8,8 @@ export default defineConfig({
             'https://api.bilibili.com/*',
             'https://www.bilibili.com/*',
             'https://www.youtube.com/oembed*',
-            'https://raw.githubusercontent.com/*'
+            'https://raw.githubusercontent.com/*',
+            'https://pan.quark.cn/*'
         ]
     }
 });

@@ -943,6 +943,87 @@ export default defineBackground(() => {
         }
     }
 
+    // 综合搜索视频（使用 search/all/v2 API）
+    async function searchBilibiliVideoAllV2(keyword) {
+        try {
+            console.log(`[searchBilibiliVideoAllV2] 开始搜索: "${keyword}"`);
+
+            // 获取WBI Keys
+            const wbiKeys = await getWbiKeys();
+
+            // 构建API参数（综合搜索只需要 keyword）
+            const params = {
+                keyword: keyword,
+                wts: Math.round(Date.now() / 1000)
+            };
+
+            // 生成签名
+            const query = encWbi(params, wbiKeys.img_key, wbiKeys.sub_key);
+            const apiUrl = `https://api.bilibili.com/x/web-interface/wbi/search/all/v2?${query}`;
+
+            console.log(`[searchBilibiliVideoAllV2] API URL: ${apiUrl}`);
+
+            // 发起API请求
+            const response = await fetch(apiUrl, {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                    Referer: 'https://search.bilibili.com/',
+                    Origin: 'https://www.bilibili.com'
+                }
+            });
+
+            if (!response.ok) {
+                throw new Error(`API请求失败: ${response.status}`);
+            }
+
+            const data = await response.json();
+
+            // 原样打印完整的搜索结果
+            console.log('[searchBilibiliVideoAllV2] 搜索结果原始数据:', JSON.stringify(data, null, 2));
+
+            if (data.code !== 0) {
+                throw new Error(`API返回错误: ${data.message || '未知错误'}`);
+            }
+
+            // 从 result 数组中提取视频结果
+            const results = [];
+            if (data.data && data.data.result) {
+                // 查找 result_type 为 'video' 的项
+                const videoResult = data.data.result.find(item => item.result_type === 'video');
+                
+                if (videoResult && videoResult.data) {
+                    for (const video of videoResult.data.slice(0, 5)) {
+                        // 只返回前5个结果
+                        results.push({
+                            bvid: video.bvid,
+                            title: video.title.replace(/<[^>]*>/g, ''), // 去除HTML高亮标签
+                            author: video.author,
+                            mid: video.mid,
+                            pic: video.pic.startsWith('//') ? `https:${video.pic}` : video.pic,
+                            play: video.play,
+                            duration: video.duration,
+                            pubdate: video.pubdate
+                        });
+                    }
+                }
+            }
+
+            console.log(`[searchBilibiliVideoAllV2] 找到 ${results.length} 个视频结果`);
+
+            return {
+                success: true,
+                results: results,
+                keyword: keyword
+            };
+        } catch (error) {
+            console.error('[searchBilibiliVideoAllV2] 搜索失败:', error);
+            return {
+                success: false,
+                error: error.message
+            };
+        }
+    }
+
     // 分割标题重新搜索的辅助函数
     async function searchWithSplitTitle(bilibiliUID, title, wbiKeys) {
         try {
@@ -1271,6 +1352,55 @@ export default defineBackground(() => {
             searchBilibiliVideoGlobal(request.keyword)
                 .then((result) => {
                     sendResponse(result);
+                })
+                .catch((error) => {
+                    sendResponse({
+                        success: false,
+                        error: error.message
+                    });
+                });
+
+            return true; // 保持消息通道开启
+        } else if (request.type === 'searchBilibiliVideoAllV2') {
+            // 综合搜索视频（使用 search/all/v2 API）
+            searchBilibiliVideoAllV2(request.keyword)
+                .then((result) => {
+                    sendResponse(result);
+                })
+                .catch((error) => {
+                    sendResponse({
+                        success: false,
+                        error: error.message
+                    });
+                });
+
+            return true; // 保持消息通道开启
+        } else if (request.type === 'downloadDanmakuForQuark') {
+            // Quark 专用：下载弹幕并保存（使用 quark_ 前缀）
+            downloadAllDanmaku(request.bvid, request.videoDuration)
+                .then(async (data) => {
+                    // 保存弹幕数据（使用 quark_ 前缀）
+                    const storageKey = `quark_${request.quarkVideoId}`;
+                    const storageData = {
+                        [storageKey]: {
+                            bilibili_url: `https://www.bilibili.com/video/${request.bvid}`,
+                            bilibili_title: data.title,
+                            danmakus: data.danmakus,
+                            duration: data.duration,
+                            timeOffset: 0,
+                            lastUpdate: Date.now()
+                        }
+                    };
+
+                    await browser.storage.local.set(storageData);
+
+                    console.log(`[Quark] 弹幕已保存: ${storageKey}, ${data.danmakus.length} 条`);
+
+                    sendResponse({
+                        success: true,
+                        count: data.danmakus.length,
+                        title: data.title
+                    });
                 })
                 .catch((error) => {
                     sendResponse({

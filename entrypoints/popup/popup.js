@@ -1346,24 +1346,392 @@ browser.runtime
         console.log('通知background失败:', error);
     });
 
-// 检查是否为YouTube页面并切换界面
+// 检查页面类型并切换界面
 async function checkPageTypeAndToggleUI() {
     const tab = await getCurrentTab();
     const isYouTubePage = tab && tab.url && tab.url.includes('youtube.com');
+    const isQuarkPage = tab && tab.url && tab.url.includes('pan.quark.cn');
 
     const simpleContainer = document.getElementById('simple-container');
     const mainContainer = document.getElementById('main-container');
+    const quarkContainer = document.getElementById('quark-container');
+
+    // 隐藏所有容器
+    simpleContainer.style.display = 'none';
+    mainContainer.style.display = 'none';
+    if (quarkContainer) quarkContainer.style.display = 'none';
 
     if (isYouTubePage) {
-        // 是YouTube页面，显示完整功能界面
+        // YouTube页面，显示完整功能界面
         mainContainer.style.display = 'block';
-        simpleContainer.style.display = 'none';
-        return true;
+        return 'youtube';
+    } else if (isQuarkPage) {
+        // Quark页面，显示专用界面
+        initQuarkUI();
+        return 'quark';
     } else {
-        // 不是YouTube页面，显示简化界面
-        mainContainer.style.display = 'none';
+        // 其他页面，显示默认简化界面
         simpleContainer.style.display = 'block';
-        return false;
+        return 'other';
+    }
+}
+
+// 初始化 Quark UI（HTML 已在 popup.html 中定义）
+function initQuarkUI() {
+    const quarkContainer = document.getElementById('quark-container');
+    if (quarkContainer) {
+        quarkContainer.style.display = 'block';
+        // 绑定 Quark UI 事件
+        bindQuarkUIEvents();
+    }
+}
+
+// 绑定 Quark UI 事件
+function bindQuarkUIEvents() {
+    const downloadBtn = document.getElementById('quark-download-btn');
+    if (downloadBtn && !downloadBtn.hasAttribute('data-bound')) {
+        downloadBtn.setAttribute('data-bound', 'true');
+        downloadBtn.addEventListener('click', downloadQuarkDanmaku);
+    }
+    
+    // 设置变更事件
+    const settingIds = ['quark-enable-danmaku', 'quark-opacity', 'quark-font-size', 'quark-speed'];
+    settingIds.forEach(id => {
+        const el = document.getElementById(id);
+        if (el && !el.hasAttribute('data-bound')) {
+            el.setAttribute('data-bound', 'true');
+            el.addEventListener('input', () => {
+                updateQuarkSliderValues();
+                saveQuarkSettings();
+            });
+        }
+    });
+    
+    // 时间偏移滑块和输入框同步
+    const timeOffsetSlider = document.getElementById('quark-time-offset');
+    const timeOffsetInput = document.getElementById('quark-time-offset-input');
+    
+    if (timeOffsetSlider && !timeOffsetSlider.hasAttribute('data-bound')) {
+        timeOffsetSlider.setAttribute('data-bound', 'true');
+        timeOffsetSlider.addEventListener('input', () => {
+            if (timeOffsetInput) {
+                timeOffsetInput.value = timeOffsetSlider.value;
+            }
+            saveQuarkSettings();
+        });
+    }
+    
+    if (timeOffsetInput && !timeOffsetInput.hasAttribute('data-bound')) {
+        timeOffsetInput.setAttribute('data-bound', 'true');
+        timeOffsetInput.addEventListener('input', () => {
+            const value = parseFloat(timeOffsetInput.value) || 0;
+            // 同步滑块（滑块有范围限制）
+            if (timeOffsetSlider) {
+                timeOffsetSlider.value = Math.max(-60, Math.min(60, value));
+            }
+            saveQuarkSettings();
+        });
+    }
+    
+    // 加载设置
+    loadQuarkSettings();
+}
+
+// 更新 Quark 滑块显示值
+function updateQuarkSliderValues() {
+    const opacityEl = document.getElementById('quark-opacity');
+    const fontSizeEl = document.getElementById('quark-font-size');
+    const speedEl = document.getElementById('quark-speed');
+    
+    if (opacityEl) {
+        document.getElementById('quark-opacity-value').textContent = opacityEl.value + '%';
+    }
+    if (fontSizeEl) {
+        document.getElementById('quark-font-size-value').textContent = fontSizeEl.value + 'px';
+    }
+    if (speedEl) {
+        document.getElementById('quark-speed-value').textContent = speedEl.value + 'x';
+    }
+}
+
+// 保存 Quark 设置
+async function saveQuarkSettings() {
+    // 优先使用输入框的值
+    const timeOffsetInput = document.getElementById('quark-time-offset-input');
+    const timeOffsetSlider = document.getElementById('quark-time-offset');
+    const timeOffset = timeOffsetInput && timeOffsetInput.value !== ''
+        ? parseFloat(timeOffsetInput.value) || 0
+        : parseFloat(timeOffsetSlider?.value) || 0;
+
+    const settings = {
+        enabled: document.getElementById('quark-enable-danmaku')?.checked ?? true,
+        timeOffset: timeOffset,
+        opacity: parseInt(document.getElementById('quark-opacity')?.value) || 100,
+        fontSize: parseInt(document.getElementById('quark-font-size')?.value) || 24,
+        speed: parseFloat(document.getElementById('quark-speed')?.value) || 1.0,
+        trackSpacing: 8,
+        displayAreaPercentage: 100,
+        weightThreshold: 0
+    };
+
+    await browser.storage.local.set({ danmakuSettings: settings });
+
+    // 通知 content script 更新设置
+    const tab = await getCurrentTab();
+    if (tab && tab.url.includes('pan.quark.cn')) {
+        browser.tabs.sendMessage(tab.id, {
+            type: 'updateSettings',
+            settings: settings
+        });
+    }
+}
+
+// 加载 Quark 设置
+async function loadQuarkSettings() {
+    const result = await browser.storage.local.get('danmakuSettings');
+    const settings = result.danmakuSettings || {
+        enabled: true,
+        timeOffset: 0,
+        opacity: 100,
+        fontSize: 24,
+        speed: 1.0
+    };
+
+    const enableEl = document.getElementById('quark-enable-danmaku');
+    const opacityEl = document.getElementById('quark-opacity');
+    const fontSizeEl = document.getElementById('quark-font-size');
+    const speedEl = document.getElementById('quark-speed');
+    const timeOffsetSlider = document.getElementById('quark-time-offset');
+    const timeOffsetInput = document.getElementById('quark-time-offset-input');
+
+    if (enableEl) enableEl.checked = settings.enabled;
+    if (opacityEl) opacityEl.value = settings.opacity;
+    if (fontSizeEl) fontSizeEl.value = settings.fontSize;
+    if (speedEl) speedEl.value = settings.speed || 1.0;
+    if (timeOffsetSlider) timeOffsetSlider.value = settings.timeOffset;
+    if (timeOffsetInput) timeOffsetInput.value = settings.timeOffset;
+
+    updateQuarkSliderValues();
+}
+
+// 显示 Quark 状态信息
+function showQuarkStatus(message, type = 'loading') {
+    const statusBar = document.getElementById('quark-status-bar');
+    if (!statusBar) return;
+    
+    statusBar.textContent = message;
+    statusBar.className = `status-bar show ${type}`;
+
+    if (type !== 'loading') {
+        setTimeout(() => {
+            statusBar.classList.remove('show');
+        }, 3000);
+    }
+}
+
+// 下载 Quark 弹幕
+async function downloadQuarkDanmaku() {
+    const urlInput = document.getElementById('quark-bilibili-url');
+    const url = urlInput?.value?.trim();
+    
+    if (!url) {
+        showQuarkStatus('请输入B站视频链接', 'error');
+        return;
+    }
+
+    const bvid = parseBilibiliUrl(url);
+    if (!bvid) {
+        showQuarkStatus('无效的B站视频链接', 'error');
+        return;
+    }
+
+    const tab = await getCurrentTab();
+    if (!tab || !tab.url.includes('pan.quark.cn')) {
+        showQuarkStatus('请在夸克网盘视频页面使用', 'error');
+        return;
+    }
+
+    // 从 URL 获取 Quark 视频 ID
+    const hashMatch = tab.url.match(/#\/video\/([a-zA-Z0-9]+)/);
+    const quarkVideoId = hashMatch ? hashMatch[1] : null;
+    
+    if (!quarkVideoId) {
+        showQuarkStatus('请在视频播放页面使用', 'error');
+        return;
+    }
+
+    const downloadBtn = document.getElementById('quark-download-btn');
+    if (downloadBtn) downloadBtn.disabled = true;
+    showQuarkStatus('正在获取弹幕数据...', 'loading');
+
+    try {
+        // 获取视频时长
+        let videoDuration = null;
+        try {
+            const response = await browser.tabs.sendMessage(tab.id, {
+                type: 'getVideoDuration'
+            });
+            videoDuration = response?.duration;
+        } catch (error) {
+            console.log('获取视频长度失败:', error);
+        }
+
+        // 下载弹幕
+        const response = await browser.runtime.sendMessage({
+            type: 'downloadDanmaku',
+            bvid: bvid,
+            youtubeVideoId: `quark_${quarkVideoId}`, // 使用 quark_ 前缀
+            youtubeVideoDuration: videoDuration
+        });
+
+        if (response.success) {
+            showQuarkStatus(`成功下载 ${response.count} 条弹幕`, 'success');
+            
+            // 更新弹幕信息显示
+            const danmakuInfo = document.getElementById('quark-danmaku-info');
+            if (danmakuInfo) {
+                danmakuInfo.textContent = `已加载 ${response.count} 条弹幕`;
+                danmakuInfo.classList.add('show');
+            }
+
+            // 显示弹幕列表
+            const storageKey = `quark_${quarkVideoId}`;
+            const result = await browser.storage.local.get(storageKey);
+            if (result[storageKey] && result[storageKey].danmakus) {
+                displayQuarkDanmakuList(result[storageKey].danmakus);
+            }
+
+            // 通知 content script 加载弹幕
+            browser.tabs.sendMessage(tab.id, {
+                type: 'loadDanmaku',
+                quarkVideoId: quarkVideoId
+            });
+        } else {
+            showQuarkStatus(response.error || '下载失败', 'error');
+        }
+    } catch (error) {
+        showQuarkStatus('下载出错：' + error.message, 'error');
+    } finally {
+        if (downloadBtn) downloadBtn.disabled = false;
+    }
+}
+
+// 显示 Quark 弹幕列表
+function displayQuarkDanmakuList(danmakus) {
+    const container = document.getElementById('quark-danmaku-list-container');
+    const list = document.getElementById('quark-danmaku-list');
+
+    if (!container || !list) return;
+
+    if (!danmakus || danmakus.length === 0) {
+        container.classList.remove('show');
+        return;
+    }
+
+    container.classList.add('show');
+
+    // 格式化时间
+    const formatTime = (seconds) => {
+        const mins = Math.floor(seconds / 60);
+        const secs = Math.floor(seconds % 60);
+        return `${mins}:${secs.toString().padStart(2, '0')}`;
+    };
+
+    // 渲染弹幕列表
+    const renderList = (filterText = '') => {
+        const filtered = filterText
+            ? danmakus.filter((d) => d.text.toLowerCase().includes(filterText.toLowerCase()))
+            : danmakus;
+
+        list.innerHTML = filtered
+            .map(
+                (danmaku) => `
+            <div class="danmaku-item" data-time="${danmaku.time}">
+                <span class="danmaku-time">${formatTime(danmaku.time)}</span>
+                <span class="danmaku-text">${danmaku.text}</span>
+            </div>
+        `
+            )
+            .join('');
+    };
+
+    renderList();
+
+    // 搜索功能
+    const searchInput = document.getElementById('quark-danmaku-search');
+    if (searchInput && !searchInput.hasAttribute('data-bound')) {
+        searchInput.setAttribute('data-bound', 'true');
+        searchInput.addEventListener('input', (e) => {
+            renderList(e.target.value);
+        });
+    }
+
+    // 点击跳转功能
+    if (!list.hasAttribute('data-bound')) {
+        list.setAttribute('data-bound', 'true');
+        list.addEventListener('click', async (e) => {
+            const item = e.target.closest('.danmaku-item');
+            if (!item) return;
+
+            const time = parseFloat(item.dataset.time);
+            const tab = await getCurrentTab();
+
+            if (tab && tab.url.includes('pan.quark.cn')) {
+                browser.tabs.sendMessage(tab.id, {
+                    type: 'seekToTime',
+                    time: time
+                });
+            }
+        });
+    }
+}
+
+// 检查 Quark 当前页面弹幕状态
+async function checkQuarkDanmaku() {
+    const tab = await getCurrentTab();
+    if (!tab || !tab.url.includes('pan.quark.cn')) return;
+
+    const hashMatch = tab.url.match(/#\/video\/([a-zA-Z0-9]+)/);
+    const quarkVideoId = hashMatch ? hashMatch[1] : null;
+    
+    if (!quarkVideoId) return;
+
+    const storageKey = `quark_${quarkVideoId}`;
+    const result = await browser.storage.local.get(storageKey);
+    
+    if (result[storageKey] && result[storageKey].danmakus) {
+        const data = result[storageKey];
+        
+        // 显示已加载的弹幕信息
+        const danmakuInfo = document.getElementById('quark-danmaku-info');
+        if (danmakuInfo) {
+            danmakuInfo.textContent = `已加载 ${data.danmakus.length} 条弹幕`;
+            danmakuInfo.classList.add('show');
+        }
+        
+        // 显示弹幕列表
+        displayQuarkDanmakuList(data.danmakus);
+        
+        // 填充 URL
+        const urlInput = document.getElementById('quark-bilibili-url');
+        if (urlInput && data.bilibili_url) {
+            urlInput.value = data.bilibili_url;
+        }
+    }
+    
+    // 获取并显示视频标题
+    try {
+        const response = await browser.tabs.sendMessage(tab.id, { type: 'getPageInfo' });
+        if (response?.success && response.data?.videoTitle) {
+            const videoInfo = document.getElementById('quark-video-info');
+            const videoTitle = document.getElementById('quark-video-title');
+            if (videoInfo && videoTitle) {
+                videoTitle.textContent = response.data.videoTitle;
+                videoInfo.style.display = 'block';
+            }
+        }
+    } catch (error) {
+        console.log('获取 Quark 页面信息失败:', error);
     }
 }
 
@@ -1428,16 +1796,23 @@ function openYouTube() {
 // 初始化
 document.addEventListener('DOMContentLoaded', async () => {
     // 首先检查页面类型并切换界面
-    const isYouTubePage = await checkPageTypeAndToggleUI();
+    const pageType = await checkPageTypeAndToggleUI();
 
-    // 初始化社交图标（无论是否为YouTube页面都显示）
+    // 初始化社交图标（无论页面类型都显示）
     await initSocialIcons();
 
     // 绑定YouTube按钮事件
-    document.getElementById('open-youtube-btn').addEventListener('click', openYouTube);
+    document.getElementById('open-youtube-btn')?.addEventListener('click', openYouTube);
 
+    // 根据页面类型执行不同的初始化逻辑
+    if (pageType === 'quark') {
+        // Quark 页面初始化
+        await checkQuarkDanmaku();
+        return;
+    }
+    
     // 如果不是YouTube页面，不需要执行后续的初始化逻辑
-    if (!isYouTubePage) {
+    if (pageType !== 'youtube') {
         return;
     }
 

@@ -17,6 +17,108 @@
             </div>
         </div>
 
+        <!-- 夸克网盘专用界面 -->
+        <div class="container" id="quark-container" style="display: none">
+            <h1>B2Y 弹幕助手</h1>
+
+            <!-- 社交图标区域 -->
+            <div class="social-icons" id="social-icons-quark" style="display: none"></div>
+
+            <!-- 平台标识 -->
+            <div class="channel-info" id="quark-platform-info">
+                <div class="channel-header">
+                    <div class="channel-details" style="flex: 1;">
+                        <h3 style="display: flex; align-items: center; gap: 8px;">
+                            <span style="font-size: 18px;">📺</span>
+                            夸克网盘
+                        </h3>
+                        <p id="quark-video-title" style="margin-top: 4px; color: #666; font-size: 12px;"></p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 手动输入区域 -->
+            <div class="manual-input">
+                <div class="input-group">
+                    <label for="quark-bilibili-url">输入B站视频链接：</label>
+                    <input
+                        type="text"
+                        id="quark-bilibili-url"
+                        placeholder="https://www.bilibili.com/video/BVxxxxxx"
+                    />
+                    <div class="button-group">
+                        <button id="quark-download-btn">下载弹幕</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="status-bar" id="quark-status-bar"></div>
+
+            <div class="danmaku-info" id="quark-danmaku-info"></div>
+
+            <div class="controls">
+                <div class="control-group">
+                    <label>
+                        <input type="checkbox" id="quark-enable-danmaku" checked />
+                        启用弹幕
+                    </label>
+                </div>
+
+                <div class="control-group">
+                    <label for="quark-time-offset">时间轴偏移：</label>
+                    <div class="time-offset-controls">
+                        <input
+                            type="range"
+                            id="quark-time-offset"
+                            min="-60"
+                            max="60"
+                            value="0"
+                            step="0.5"
+                        />
+                        <div class="time-offset-manual">
+                            <input
+                                type="number"
+                                id="quark-time-offset-input"
+                                value="0"
+                                step="0.5"
+                                placeholder="0"
+                            />
+                            <span class="time-unit">s</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <label for="quark-opacity">透明度：</label>
+                    <input type="range" id="quark-opacity" min="0" max="100" value="100" step="5" />
+                    <span id="quark-opacity-value">100%</span>
+                </div>
+
+                <div class="control-group">
+                    <label for="quark-font-size">字体大小：</label>
+                    <input type="range" id="quark-font-size" min="16" max="48" value="24" step="2" />
+                    <span id="quark-font-size-value">24px</span>
+                </div>
+
+                <div class="control-group">
+                    <label for="quark-speed">滚动速度：</label>
+                    <input type="range" id="quark-speed" min="0.5" max="2" value="1" step="0.1" />
+                    <span id="quark-speed-value">1.0x</span>
+                </div>
+            </div>
+
+            <!-- 弹幕列表 -->
+            <div class="danmaku-list-container" id="quark-danmaku-list-container">
+                <div class="danmaku-list-header">
+                    <div class="danmaku-list-title">
+                        <h3>弹幕列表</h3>
+                    </div>
+                    <input type="text" id="quark-danmaku-search" placeholder="搜索弹幕..." />
+                </div>
+                <div class="danmaku-list" id="quark-danmaku-list"></div>
+            </div>
+        </div>
+
         <!-- 原有的完整功能界面 -->
         <div class="container" id="main-container">
             <h1>B站弹幕 → YouTube</h1>
