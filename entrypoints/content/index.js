@@ -444,7 +444,6 @@ export default defineContentScript({
             await loadSettings();
 
             if (!isInitTokenCurrent(token)) {
-                resetDanmakuEngineState();
                 return false;
             }
 
@@ -454,7 +453,6 @@ export default defineContentScript({
                 const hasExistingDanmaku = await loadDanmakuForVideo(videoId);
 
                 if (!isInitTokenCurrent(token)) {
-                    resetDanmakuEngineState();
                     return false;
                 }
 
@@ -470,7 +468,6 @@ export default defineContentScript({
             }
 
             if (!isInitTokenCurrent(token)) {
-                resetDanmakuEngineState();
                 return false;
             }
 
