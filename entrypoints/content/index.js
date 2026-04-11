@@ -11,6 +11,8 @@ export default defineContentScript({
         let currentVideoId = null;
         let currentPageInfo = null;
         let pageInfoCache = new Map();
+        let activeInitToken = 0;
+        let pendingInitTimeout = null;
 
         // 获取YouTube视频ID
         function getVideoId() {
@@ -349,8 +351,25 @@ export default defineContentScript({
             return null;
         }
 
-        async function waitForVideoContainer(maxAttempts = 20, delay = 500) {
+        function isInitTokenCurrent(token) {
+            return token === activeInitToken;
+        }
+
+        function resetDanmakuEngineState() {
+            if (danmakuEngine) {
+                danmakuEngine.destroy();
+                danmakuEngine = null;
+            }
+
+            stopAdStatusMonitoring();
+        }
+
+        async function waitForVideoContainer(token, maxAttempts = 20, delay = 500) {
             for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                if (!isInitTokenCurrent(token)) {
+                    return null;
+                }
+
                 const container = findVideoContainer();
                 if (container) {
                     return container;
@@ -375,9 +394,35 @@ export default defineContentScript({
             return null;
         }
 
+        function scheduleDanmakuEngineInit({ delay = 1000, updatePageInfo = false } = {}) {
+            activeInitToken += 1;
+            const token = activeInitToken;
+
+            if (pendingInitTimeout) {
+                clearTimeout(pendingInitTimeout);
+            }
+
+            pendingInitTimeout = setTimeout(async () => {
+                pendingInitTimeout = null;
+
+                const initialized = await initDanmakuEngine(token);
+                if (initialized && updatePageInfo && isInitTokenCurrent(token)) {
+                    await updateCurrentPageInfo();
+                }
+            }, delay);
+        }
+
         // 初始化弹幕引擎
-        async function initDanmakuEngine() {
-            const container = await waitForVideoContainer();
+        async function initDanmakuEngine(token = activeInitToken) {
+            if (!isInitTokenCurrent(token)) {
+                return false;
+            }
+
+            const container = await waitForVideoContainer(token);
+            if (!isInitTokenCurrent(token)) {
+                return false;
+            }
+
             if (!container) {
                 console.log('未找到视频容器');
                 return false;
@@ -390,13 +435,7 @@ export default defineContentScript({
                 height: container.offsetHeight
             });
 
-            // 销毁旧的引擎
-            if (danmakuEngine) {
-                danmakuEngine.destroy();
-            }
-
-            // 停止之前的监控
-            stopAdStatusMonitoring();
+            resetDanmakuEngineState();
 
             // 创建新引擎
             danmakuEngine = new DanmakuEngine(container);
@@ -404,18 +443,35 @@ export default defineContentScript({
             // 加载设置
             await loadSettings();
 
+            if (!isInitTokenCurrent(token)) {
+                resetDanmakuEngineState();
+                return false;
+            }
+
             // 尝试加载当前视频的弹幕
             const videoId = getVideoId();
             if (videoId) {
                 const hasExistingDanmaku = await loadDanmakuForVideo(videoId);
 
+                if (!isInitTokenCurrent(token)) {
+                    resetDanmakuEngineState();
+                    return false;
+                }
+
                 // 如果没有现有弹幕，触发自动检测
                 if (!hasExistingDanmaku) {
                     // 延迟执行自动检测，确保页面完全加载
                     setTimeout(() => {
-                        autoCheckAndDownloadDanmaku();
+                        if (isInitTokenCurrent(token)) {
+                            autoCheckAndDownloadDanmaku(token);
+                        }
                     }, 1000);
                 }
+            }
+
+            if (!isInitTokenCurrent(token)) {
+                resetDanmakuEngineState();
+                return false;
             }
 
             // 启动广告状态监控
@@ -462,8 +518,12 @@ export default defineContentScript({
         }
 
         // 自动检测并下载弹幕
-        async function autoCheckAndDownloadDanmaku() {
+        async function autoCheckAndDownloadDanmaku(token = activeInitToken) {
             try {
+                if (!isInitTokenCurrent(token)) {
+                    return;
+                }
+
                 const videoId = getVideoId();
                 if (!videoId) {
                     console.log('无法获取视频ID，跳过自动检测');
@@ -472,6 +532,10 @@ export default defineContentScript({
 
                 // 获取频道信息
                 const channelInfo = await getChannelInfo();
+                if (!isInitTokenCurrent(token)) {
+                    return;
+                }
+
                 if (!channelInfo.success || !channelInfo.channelId) {
                     console.log('无法获取频道信息，跳过自动检测');
                     return;
@@ -479,6 +543,10 @@ export default defineContentScript({
 
                 // 获取增强的视频标题（支持多语言原始标题）
                 const videoTitle = await getEnhancedVideoTitle(videoId);
+                if (!isInitTokenCurrent(token)) {
+                    return;
+                }
+
                 if (!videoTitle) {
                     console.log('无法获取视频标题，跳过自动检测');
                     return;
@@ -511,6 +579,10 @@ export default defineContentScript({
                                 episodeNumber: parseResult.episode,
                                 youtubeVideoId: videoId
                             });
+
+                            if (!isInitTokenCurrent(token)) {
+                                return;
+                            }
 
                             if (response.success) {
                                 console.log(`番剧弹幕自动下载成功: ${response.count} 条`);
@@ -546,6 +618,10 @@ export default defineContentScript({
                     channelInfo.channelId
                 );
 
+                if (!isInitTokenCurrent(token)) {
+                    return;
+                }
+
                 if (!association) {
                     console.log('频道未关联B站UP主，跳过自动检测');
                     return;
@@ -573,6 +649,10 @@ export default defineContentScript({
                     youtubeVideoDuration: youtubeVideoDuration
                 });
 
+                if (!isInitTokenCurrent(token)) {
+                    return;
+                }
+
                 if (searchResponse.success && searchResponse.results.length > 0) {
                     console.log(`找到 ${searchResponse.results.length} 个匹配视频`);
 
@@ -587,6 +667,10 @@ export default defineContentScript({
                             youtubeVideoId: videoId,
                             youtubeVideoDuration: youtubeVideoDuration
                         });
+
+                        if (!isInitTokenCurrent(token)) {
+                            return;
+                        }
 
                         if (downloadResponse.success) {
                             console.log(`自动下载弹幕成功: ${downloadResponse.count} 条`);
@@ -658,6 +742,8 @@ export default defineContentScript({
                     pageInfoCache.delete(oldVideoId);
                 }
 
+                resetDanmakuEngineState();
+
                 // 通知background script页面切换
                 browser.runtime
                     .sendMessage({
@@ -669,11 +755,7 @@ export default defineContentScript({
                     .catch((error) => console.log('通知页面切换失败:', error));
 
                 // 延迟初始化，等待页面加载
-                setTimeout(async () => {
-                    await initDanmakuEngine();
-                    // 初始化完成后更新页面信息
-                    await updateCurrentPageInfo();
-                }, 1000);
+                scheduleDanmakuEngineInit({ delay: 1000, updatePageInfo: true });
             }
         }
 
@@ -908,10 +990,10 @@ export default defineContentScript({
         // 页面加载完成后初始化
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', () => {
-                setTimeout(initDanmakuEngine, 1000);
+                scheduleDanmakuEngineInit({ delay: 1000 });
             });
         } else {
-            setTimeout(initDanmakuEngine, 1000);
+            scheduleDanmakuEngineInit({ delay: 1000 });
         }
     }
 });
