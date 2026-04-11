@@ -7,6 +7,10 @@ async function getCurrentTab() {
     return tab;
 }
 
+function getPendingStorageKey(type, tabId) {
+    return `${type}:${tabId}`;
+}
+
 // 解析B站视频ID
 function parseBilibiliUrl(url) {
     const match = url.match(/bilibili\.com\/video\/(BV\w+)/);
@@ -363,7 +367,12 @@ async function checkCurrentPageDanmaku() {
         updateManualInputUI(true, data.bilibili_url);
 
         // 当检测到有弹幕数据时，清理可能残留的未匹配状态数据
-        await browser.storage.local.remove(['pendingNoMatchResults', 'pendingSearchResults']);
+        await browser.runtime
+            .sendMessage({
+                type: 'clearSearchResults',
+                tabId: tab.id
+            })
+            .catch((error) => console.log('清理待展示搜索结果失败:', error));
     } else {
         const noMatchData = await getNoMatchDataForCurrentPage();
         updateManualInputUI(false, '', noMatchData);
@@ -528,7 +537,9 @@ async function getPageInfo(useCache = true) {
         if (useCache) {
             try {
                 const backgroundResponse = await browser.runtime.sendMessage({
-                    type: 'getPageInfoFromBackground'
+                    type: 'getPageInfoFromBackground',
+                    tabId: tab.id,
+                    tabUrl: tab.url
                 });
 
                 if (backgroundResponse && backgroundResponse.success) {
@@ -1057,8 +1068,14 @@ function displaySearchResults(results, youtubeVideoId, noMatchData = null) {
 // 检查待显示的搜索结果（作为备用方案）
 async function checkPendingSearchResults() {
     try {
-        const result = await browser.storage.local.get('pendingSearchResults');
-        const pendingResults = result.pendingSearchResults;
+        const tab = await getCurrentTab();
+        if (!tab?.id) {
+            return;
+        }
+
+        const storageKey = getPendingStorageKey('pendingSearchResults', tab.id);
+        const result = await browser.storage.local.get(storageKey);
+        const pendingResults = result[storageKey];
 
         if (pendingResults && pendingResults.results && pendingResults.results.length > 0) {
             console.log('发现待显示的搜索结果:', pendingResults.results.length);
@@ -1070,7 +1087,12 @@ async function checkPendingSearchResults() {
             showStatus(`找到 ${pendingResults.results.length} 个匹配的B站视频，请选择：`, 'info');
 
             // 清理已显示的结果
-            await browser.storage.local.remove('pendingSearchResults');
+            await browser.runtime
+                .sendMessage({
+                    type: 'clearSearchResults',
+                    tabId: tab.id
+                })
+                .catch((error) => console.log('清理待显示搜索结果失败:', error));
         }
     } catch (error) {
         console.error('检查待显示搜索结果失败:', error);
@@ -1080,8 +1102,14 @@ async function checkPendingSearchResults() {
 // 检查待显示的未匹配结果（作为备用方案）
 async function checkPendingNoMatchResults() {
     try {
-        const result = await browser.storage.local.get('pendingNoMatchResults');
-        const pendingNoMatchResults = result.pendingNoMatchResults;
+        const tab = await getCurrentTab();
+        if (!tab?.id) {
+            return;
+        }
+
+        const storageKey = getPendingStorageKey('pendingNoMatchResults', tab.id);
+        const result = await browser.storage.local.get(storageKey);
+        const pendingNoMatchResults = result[storageKey];
 
         if (pendingNoMatchResults) {
             console.log('发现待显示的未匹配结果:', pendingNoMatchResults.channelInfo);
@@ -1093,7 +1121,12 @@ async function checkPendingNoMatchResults() {
             showStatus('未找到匹配的B站视频，请手动输入或查看B站空间', 'info');
 
             // 清理已显示的结果
-            await browser.storage.local.remove('pendingNoMatchResults');
+            await browser.runtime
+                .sendMessage({
+                    type: 'clearSearchResults',
+                    tabId: tab.id
+                })
+                .catch((error) => console.log('清理待显示未匹配结果失败:', error));
         }
     } catch (error) {
         console.error('检查待显示未匹配结果失败:', error);
@@ -1310,7 +1343,10 @@ async function downloadDanmakuFromBV(bvid, youtubeVideoId = null) {
 
             // 清理后台的搜索结果数据
             browser.runtime
-                .sendMessage({ type: 'clearSearchResults' })
+                .sendMessage({
+                    type: 'clearSearchResults',
+                    tabId: tab.id
+                })
                 .catch((error) => console.log('清理搜索结果失败:', error));
 
             // 显示完成状态，然后自动关闭popup
@@ -1333,37 +1369,59 @@ async function downloadDanmakuFromBV(bvid, youtubeVideoId = null) {
 // 立即设置消息监听器，不等待DOM加载
 browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.type === 'displayMultipleResults') {
-        console.log('收到搜索结果消息:', request.data.results.length);
+        (async () => {
+            const tab = await getCurrentTab();
+            if (request.tabId != null && tab?.id != null && request.tabId !== tab.id) {
+                console.log('忽略其他标签页的搜索结果消息:', request.tabId, tab.id);
+                sendResponse({ success: false, ignored: true });
+                return;
+            }
 
-        // 如果DOM还未加载完成，等待一下
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', () => {
+            console.log('收到搜索结果消息:', request.data.results.length);
+
+            const renderResults = () => {
                 displaySearchResults(request.data.results, request.data.youtubeVideoId);
                 showStatus(`找到 ${request.data.results.length} 个匹配的B站视频，请选择：`, 'info');
-            });
-        } else {
-            // DOM已就绪，直接显示
-            displaySearchResults(request.data.results, request.data.youtubeVideoId);
-            showStatus(`找到 ${request.data.results.length} 个匹配的B站视频，请选择：`, 'info');
-        }
+            };
 
-        sendResponse({ success: true });
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', renderResults, { once: true });
+            } else {
+                renderResults();
+            }
+
+            sendResponse({ success: true });
+        })().catch((error) => {
+            console.error('处理搜索结果消息失败:', error);
+            sendResponse({ success: false, error: error.message });
+        });
     } else if (request.type === 'displayNoMatchResults') {
-        console.log('收到未匹配结果消息:', request.data);
+        (async () => {
+            const tab = await getCurrentTab();
+            if (request.tabId != null && tab?.id != null && request.tabId !== tab.id) {
+                console.log('忽略其他标签页的未匹配消息:', request.tabId, tab.id);
+                sendResponse({ success: false, ignored: true });
+                return;
+            }
 
-        // 如果DOM还未加载完成，等待一下
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', () => {
+            console.log('收到未匹配结果消息:', request.data);
+
+            const renderNoMatch = () => {
                 updateManualInputUI(false, '', request.data);
                 showStatus('未找到匹配的B站视频，请手动输入或查看B站空间', 'info');
-            });
-        } else {
-            // DOM已就绪，直接显示
-            updateManualInputUI(false, '', request.data);
-            showStatus('未找到匹配的B站视频，请手动输入或查看B站空间', 'info');
-        }
+            };
 
-        sendResponse({ success: true });
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', renderNoMatch, { once: true });
+            } else {
+                renderNoMatch();
+            }
+
+            sendResponse({ success: true });
+        })().catch((error) => {
+            console.error('处理未匹配结果消息失败:', error);
+            sendResponse({ success: false, error: error.message });
+        });
     }
 
     return true; // 保持消息通道开启
@@ -1371,18 +1429,23 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
 // 消息监听器设置完成后，立即通知background popup已准备好
 console.log('消息监听器已设置，通知background popup准备完成');
-browser.runtime
-    .sendMessage({ type: 'popupReady' })
-    .then((response) => {
+(async () => {
+    try {
+        const tab = await getCurrentTab();
+        const response = await browser.runtime.sendMessage({
+            type: 'popupReady',
+            tabId: tab?.id ?? null
+        });
+
         if (response && response.success) {
             console.log('成功通知background popup已准备完成');
         } else {
             console.log('background暂无待显示的搜索结果');
         }
-    })
-    .catch((error) => {
+    } catch (error) {
         console.log('通知background失败:', error);
-    });
+    }
+})();
 
 // 检查页面类型并切换界面
 async function checkPageTypeAndToggleUI() {
