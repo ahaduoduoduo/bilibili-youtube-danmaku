@@ -365,7 +365,33 @@ async function checkCurrentPageDanmaku() {
         // 当检测到有弹幕数据时，清理可能残留的未匹配状态数据
         await browser.storage.local.remove(['pendingNoMatchResults', 'pendingSearchResults']);
     } else {
-        updateManualInputUI(false);
+        const noMatchData = await getNoMatchDataForCurrentPage();
+        updateManualInputUI(false, '', noMatchData);
+    }
+}
+
+async function getNoMatchDataForCurrentPage() {
+    try {
+        const pageInfo = await getPageInfo();
+        if (!pageInfo || !pageInfo.channel?.success || !pageInfo.channel.channelId) {
+            return null;
+        }
+
+        const association = await channelAssociation.getChannelAssociation(
+            pageInfo.channel.channelId
+        );
+        if (!association) {
+            return null;
+        }
+
+        return {
+            youtubeVideoId: pageInfo.videoId,
+            channelInfo: pageInfo.channel,
+            videoTitle: pageInfo.videoTitle
+        };
+    } catch (error) {
+        console.error('获取未匹配状态数据失败:', error);
+        return null;
     }
 }
 
@@ -950,7 +976,11 @@ async function autoSearchDanmaku(silent = false) {
         });
 
         if (searchResponse.success) {
-            displaySearchResults(searchResponse.results, pageInfo.videoId);
+            displaySearchResults(searchResponse.results, pageInfo.videoId, {
+                youtubeVideoId: pageInfo.videoId,
+                channelInfo: pageInfo.channel,
+                videoTitle: pageInfo.videoTitle
+            });
             return true;
         } else {
             if (!silent) showStatus(searchResponse.error || '搜索失败', 'error');
@@ -964,7 +994,7 @@ async function autoSearchDanmaku(silent = false) {
 }
 
 // 显示搜索结果
-function displaySearchResults(results, youtubeVideoId) {
+function displaySearchResults(results, youtubeVideoId, noMatchData = null) {
     const searchResults = document.getElementById('search-results');
     const searchStatus = document.getElementById('search-status');
     const searchList = document.getElementById('search-list');
@@ -974,6 +1004,7 @@ function displaySearchResults(results, youtubeVideoId) {
     if (results.length === 0) {
         searchStatus.textContent = '未找到匹配的视频';
         searchList.innerHTML = '';
+        updateManualInputUI(false, '', noMatchData);
     } else if (results.length === 1) {
         searchStatus.textContent = '找到1个匹配视频，正在自动下载弹幕...';
         searchList.innerHTML = '';
@@ -1243,7 +1274,14 @@ async function downloadDanmakuFromBV(bvid, youtubeVideoId = null) {
             console.log('获取YouTube视频长度失败:', error);
         }
 
-        console.log('下载弹幕 - BVID:', bvid, 'YouTube视频ID:', youtubeVideoId, 'YouTube视频长度:', youtubeVideoDuration);
+        console.log(
+            '下载弹幕 - BVID:',
+            bvid,
+            'YouTube视频ID:',
+            youtubeVideoId,
+            'YouTube视频长度:',
+            youtubeVideoDuration
+        );
 
         showStatus('正在下载弹幕...', 'loading');
 
@@ -1393,10 +1431,10 @@ function bindQuarkUIEvents() {
         downloadBtn.setAttribute('data-bound', 'true');
         downloadBtn.addEventListener('click', downloadQuarkDanmaku);
     }
-    
+
     // 设置变更事件
     const settingIds = ['quark-enable-danmaku', 'quark-opacity', 'quark-font-size', 'quark-speed'];
-    settingIds.forEach(id => {
+    settingIds.forEach((id) => {
         const el = document.getElementById(id);
         if (el && !el.hasAttribute('data-bound')) {
             el.setAttribute('data-bound', 'true');
@@ -1406,11 +1444,11 @@ function bindQuarkUIEvents() {
             });
         }
     });
-    
+
     // 时间偏移滑块和输入框同步
     const timeOffsetSlider = document.getElementById('quark-time-offset');
     const timeOffsetInput = document.getElementById('quark-time-offset-input');
-    
+
     if (timeOffsetSlider && !timeOffsetSlider.hasAttribute('data-bound')) {
         timeOffsetSlider.setAttribute('data-bound', 'true');
         timeOffsetSlider.addEventListener('input', () => {
@@ -1420,7 +1458,7 @@ function bindQuarkUIEvents() {
             saveQuarkSettings();
         });
     }
-    
+
     if (timeOffsetInput && !timeOffsetInput.hasAttribute('data-bound')) {
         timeOffsetInput.setAttribute('data-bound', 'true');
         timeOffsetInput.addEventListener('input', () => {
@@ -1432,7 +1470,7 @@ function bindQuarkUIEvents() {
             saveQuarkSettings();
         });
     }
-    
+
     // 加载设置
     loadQuarkSettings();
 }
@@ -1442,7 +1480,7 @@ function updateQuarkSliderValues() {
     const opacityEl = document.getElementById('quark-opacity');
     const fontSizeEl = document.getElementById('quark-font-size');
     const speedEl = document.getElementById('quark-speed');
-    
+
     if (opacityEl) {
         document.getElementById('quark-opacity-value').textContent = opacityEl.value + '%';
     }
@@ -1459,9 +1497,10 @@ async function saveQuarkSettings() {
     // 优先使用输入框的值
     const timeOffsetInput = document.getElementById('quark-time-offset-input');
     const timeOffsetSlider = document.getElementById('quark-time-offset');
-    const timeOffset = timeOffsetInput && timeOffsetInput.value !== ''
-        ? parseFloat(timeOffsetInput.value) || 0
-        : parseFloat(timeOffsetSlider?.value) || 0;
+    const timeOffset =
+        timeOffsetInput && timeOffsetInput.value !== ''
+            ? parseFloat(timeOffsetInput.value) || 0
+            : parseFloat(timeOffsetSlider?.value) || 0;
 
     const settings = {
         enabled: document.getElementById('quark-enable-danmaku')?.checked ?? true,
@@ -1518,7 +1557,7 @@ async function loadQuarkSettings() {
 function showQuarkStatus(message, type = 'loading') {
     const statusBar = document.getElementById('quark-status-bar');
     if (!statusBar) return;
-    
+
     statusBar.textContent = message;
     statusBar.className = `status-bar show ${type}`;
 
@@ -1533,7 +1572,7 @@ function showQuarkStatus(message, type = 'loading') {
 async function downloadQuarkDanmaku() {
     const urlInput = document.getElementById('quark-bilibili-url');
     const url = urlInput?.value?.trim();
-    
+
     if (!url) {
         showQuarkStatus('请输入B站视频链接', 'error');
         return;
@@ -1554,7 +1593,7 @@ async function downloadQuarkDanmaku() {
     // 从 URL 获取 Quark 视频 ID
     const hashMatch = tab.url.match(/#\/video\/([a-zA-Z0-9]+)/);
     const quarkVideoId = hashMatch ? hashMatch[1] : null;
-    
+
     if (!quarkVideoId) {
         showQuarkStatus('请在视频播放页面使用', 'error');
         return;
@@ -1586,7 +1625,7 @@ async function downloadQuarkDanmaku() {
 
         if (response.success) {
             showQuarkStatus(`成功下载 ${response.count} 条弹幕`, 'success');
-            
+
             // 更新弹幕信息显示
             const danmakuInfo = document.getElementById('quark-danmaku-info');
             if (danmakuInfo) {
@@ -1693,32 +1732,32 @@ async function checkQuarkDanmaku() {
 
     const hashMatch = tab.url.match(/#\/video\/([a-zA-Z0-9]+)/);
     const quarkVideoId = hashMatch ? hashMatch[1] : null;
-    
+
     if (!quarkVideoId) return;
 
     const storageKey = `quark_${quarkVideoId}`;
     const result = await browser.storage.local.get(storageKey);
-    
+
     if (result[storageKey] && result[storageKey].danmakus) {
         const data = result[storageKey];
-        
+
         // 显示已加载的弹幕信息
         const danmakuInfo = document.getElementById('quark-danmaku-info');
         if (danmakuInfo) {
             danmakuInfo.textContent = `已加载 ${data.danmakus.length} 条弹幕`;
             danmakuInfo.classList.add('show');
         }
-        
+
         // 显示弹幕列表
         displayQuarkDanmakuList(data.danmakus);
-        
+
         // 填充 URL
         const urlInput = document.getElementById('quark-bilibili-url');
         if (urlInput && data.bilibili_url) {
             urlInput.value = data.bilibili_url;
         }
     }
-    
+
     // 获取并显示视频标题
     try {
         const response = await browser.tabs.sendMessage(tab.id, { type: 'getPageInfo' });
@@ -1810,7 +1849,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         await checkQuarkDanmaku();
         return;
     }
-    
+
     // 如果不是YouTube页面，不需要执行后续的初始化逻辑
     if (pageType !== 'youtube') {
         return;
