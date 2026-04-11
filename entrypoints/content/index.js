@@ -311,23 +311,65 @@ export default defineContentScript({
         }
 
         // 查找视频容器
+        function isVisibleElement(element) {
+            if (!element) {
+                return false;
+            }
+
+            const rect = element.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+        }
+
         function findVideoContainer() {
             // 最佳目标：直接包裹 <video> 元素的容器
             const videoContainer = document.querySelector('.html5-video-container');
-            if (videoContainer && videoContainer.offsetHeight > 0) {
+            if (isVisibleElement(videoContainer)) {
                 return videoContainer;
             }
 
-            // 备选方案：<video> 元素的直接父元素
+            // 备选方案：优先使用 <video> 最近的播放器容器
             const video = document.querySelector('video');
-            if (video && video.parentElement && video.parentElement.offsetHeight > 0) {
-                return video.parentElement;
+            if (video) {
+                const closestContainer = video.closest('.html5-video-container');
+                if (isVisibleElement(closestContainer)) {
+                    return closestContainer;
+                }
+
+                if (isVisibleElement(video.parentElement)) {
+                    return video.parentElement;
+                }
             }
 
             // 最后的备选：旧版播放器ID，兼容性考虑
             const moviePlayer = document.querySelector('#movie_player');
-            if (moviePlayer && moviePlayer.offsetHeight > 0) {
+            if (isVisibleElement(moviePlayer)) {
                 return moviePlayer;
+            }
+
+            return null;
+        }
+
+        async function waitForVideoContainer(maxAttempts = 20, delay = 500) {
+            for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                const container = findVideoContainer();
+                if (container) {
+                    return container;
+                }
+
+                if (attempt === 1 || attempt === maxAttempts || attempt % 5 === 0) {
+                    const video = document.querySelector('video');
+                    const rect = video ? video.getBoundingClientRect() : null;
+                    console.log('等待视频容器...', {
+                        attempt,
+                        hasVideo: !!video,
+                        videoReadyState: video ? video.readyState : null,
+                        videoSize: rect
+                            ? `${Math.round(rect.width)}x${Math.round(rect.height)}`
+                            : 'N/A'
+                    });
+                }
+
+                await new Promise((resolve) => setTimeout(resolve, delay));
             }
 
             return null;
@@ -335,10 +377,10 @@ export default defineContentScript({
 
         // 初始化弹幕引擎
         async function initDanmakuEngine() {
-            const container = findVideoContainer();
+            const container = await waitForVideoContainer();
             if (!container) {
                 console.log('未找到视频容器');
-                return;
+                return false;
             }
 
             console.log('找到视频容器:', {
@@ -378,6 +420,8 @@ export default defineContentScript({
 
             // 启动广告状态监控
             startAdStatusMonitoring();
+
+            return true;
         }
 
         // 加载设置
@@ -427,7 +471,7 @@ export default defineContentScript({
                 }
 
                 // 获取频道信息
-                const channelInfo = getChannelInfo();
+                const channelInfo = await getChannelInfo();
                 if (!channelInfo.success || !channelInfo.channelId) {
                     console.log('无法获取频道信息，跳过自动检测');
                     return;
