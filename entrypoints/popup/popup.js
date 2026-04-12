@@ -7,6 +7,10 @@ async function getCurrentTab() {
     return tab;
 }
 
+function getPendingStorageKey(type, tabId) {
+    return `${type}:${tabId}`;
+}
+
 // 解析B站视频ID
 function parseBilibiliUrl(url) {
     const match = url.match(/bilibili\.com\/video\/(BV\w+)/);
@@ -363,9 +367,40 @@ async function checkCurrentPageDanmaku() {
         updateManualInputUI(true, data.bilibili_url);
 
         // 当检测到有弹幕数据时，清理可能残留的未匹配状态数据
-        await browser.storage.local.remove(['pendingNoMatchResults', 'pendingSearchResults']);
+        await browser.runtime
+            .sendMessage({
+                type: 'clearSearchResults',
+                tabId: tab.id
+            })
+            .catch((error) => console.log('清理待展示搜索结果失败:', error));
     } else {
-        updateManualInputUI(false);
+        const noMatchData = await getNoMatchDataForCurrentPage();
+        updateManualInputUI(false, '', noMatchData);
+    }
+}
+
+async function getNoMatchDataForCurrentPage() {
+    try {
+        const pageInfo = await getPageInfo();
+        if (!pageInfo || !pageInfo.channel?.success || !pageInfo.channel.channelId) {
+            return null;
+        }
+
+        const association = await channelAssociation.getChannelAssociation(
+            pageInfo.channel.channelId
+        );
+        if (!association) {
+            return null;
+        }
+
+        return {
+            youtubeVideoId: pageInfo.videoId,
+            channelInfo: pageInfo.channel,
+            videoTitle: pageInfo.videoTitle
+        };
+    } catch (error) {
+        console.error('获取未匹配状态数据失败:', error);
+        return null;
     }
 }
 
@@ -502,7 +537,9 @@ async function getPageInfo(useCache = true) {
         if (useCache) {
             try {
                 const backgroundResponse = await browser.runtime.sendMessage({
-                    type: 'getPageInfoFromBackground'
+                    type: 'getPageInfoFromBackground',
+                    tabId: tab.id,
+                    tabUrl: tab.url
                 });
 
                 if (backgroundResponse && backgroundResponse.success) {
@@ -950,7 +987,11 @@ async function autoSearchDanmaku(silent = false) {
         });
 
         if (searchResponse.success) {
-            displaySearchResults(searchResponse.results, pageInfo.videoId);
+            displaySearchResults(searchResponse.results, pageInfo.videoId, {
+                youtubeVideoId: pageInfo.videoId,
+                channelInfo: pageInfo.channel,
+                videoTitle: pageInfo.videoTitle
+            });
             return true;
         } else {
             if (!silent) showStatus(searchResponse.error || '搜索失败', 'error');
@@ -964,7 +1005,7 @@ async function autoSearchDanmaku(silent = false) {
 }
 
 // 显示搜索结果
-function displaySearchResults(results, youtubeVideoId) {
+function displaySearchResults(results, youtubeVideoId, noMatchData = null) {
     const searchResults = document.getElementById('search-results');
     const searchStatus = document.getElementById('search-status');
     const searchList = document.getElementById('search-list');
@@ -974,6 +1015,7 @@ function displaySearchResults(results, youtubeVideoId) {
     if (results.length === 0) {
         searchStatus.textContent = '未找到匹配的视频';
         searchList.innerHTML = '';
+        updateManualInputUI(false, '', noMatchData);
     } else if (results.length === 1) {
         searchStatus.textContent = '找到1个匹配视频，正在自动下载弹幕...';
         searchList.innerHTML = '';
@@ -1026,8 +1068,14 @@ function displaySearchResults(results, youtubeVideoId) {
 // 检查待显示的搜索结果（作为备用方案）
 async function checkPendingSearchResults() {
     try {
-        const result = await browser.storage.local.get('pendingSearchResults');
-        const pendingResults = result.pendingSearchResults;
+        const tab = await getCurrentTab();
+        if (!tab?.id) {
+            return;
+        }
+
+        const storageKey = getPendingStorageKey('pendingSearchResults', tab.id);
+        const result = await browser.storage.local.get(storageKey);
+        const pendingResults = result[storageKey];
 
         if (pendingResults && pendingResults.results && pendingResults.results.length > 0) {
             console.log('发现待显示的搜索结果:', pendingResults.results.length);
@@ -1039,7 +1087,12 @@ async function checkPendingSearchResults() {
             showStatus(`找到 ${pendingResults.results.length} 个匹配的B站视频，请选择：`, 'info');
 
             // 清理已显示的结果
-            await browser.storage.local.remove('pendingSearchResults');
+            await browser.runtime
+                .sendMessage({
+                    type: 'clearSearchResults',
+                    tabId: tab.id
+                })
+                .catch((error) => console.log('清理待显示搜索结果失败:', error));
         }
     } catch (error) {
         console.error('检查待显示搜索结果失败:', error);
@@ -1049,8 +1102,14 @@ async function checkPendingSearchResults() {
 // 检查待显示的未匹配结果（作为备用方案）
 async function checkPendingNoMatchResults() {
     try {
-        const result = await browser.storage.local.get('pendingNoMatchResults');
-        const pendingNoMatchResults = result.pendingNoMatchResults;
+        const tab = await getCurrentTab();
+        if (!tab?.id) {
+            return;
+        }
+
+        const storageKey = getPendingStorageKey('pendingNoMatchResults', tab.id);
+        const result = await browser.storage.local.get(storageKey);
+        const pendingNoMatchResults = result[storageKey];
 
         if (pendingNoMatchResults) {
             console.log('发现待显示的未匹配结果:', pendingNoMatchResults.channelInfo);
@@ -1062,7 +1121,12 @@ async function checkPendingNoMatchResults() {
             showStatus('未找到匹配的B站视频，请手动输入或查看B站空间', 'info');
 
             // 清理已显示的结果
-            await browser.storage.local.remove('pendingNoMatchResults');
+            await browser.runtime
+                .sendMessage({
+                    type: 'clearSearchResults',
+                    tabId: tab.id
+                })
+                .catch((error) => console.log('清理待显示未匹配结果失败:', error));
         }
     } catch (error) {
         console.error('检查待显示未匹配结果失败:', error);
@@ -1243,7 +1307,14 @@ async function downloadDanmakuFromBV(bvid, youtubeVideoId = null) {
             console.log('获取YouTube视频长度失败:', error);
         }
 
-        console.log('下载弹幕 - BVID:', bvid, 'YouTube视频ID:', youtubeVideoId, 'YouTube视频长度:', youtubeVideoDuration);
+        console.log(
+            '下载弹幕 - BVID:',
+            bvid,
+            'YouTube视频ID:',
+            youtubeVideoId,
+            'YouTube视频长度:',
+            youtubeVideoDuration
+        );
 
         showStatus('正在下载弹幕...', 'loading');
 
@@ -1272,7 +1343,10 @@ async function downloadDanmakuFromBV(bvid, youtubeVideoId = null) {
 
             // 清理后台的搜索结果数据
             browser.runtime
-                .sendMessage({ type: 'clearSearchResults' })
+                .sendMessage({
+                    type: 'clearSearchResults',
+                    tabId: tab.id
+                })
                 .catch((error) => console.log('清理搜索结果失败:', error));
 
             // 显示完成状态，然后自动关闭popup
@@ -1295,37 +1369,59 @@ async function downloadDanmakuFromBV(bvid, youtubeVideoId = null) {
 // 立即设置消息监听器，不等待DOM加载
 browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
     if (request.type === 'displayMultipleResults') {
-        console.log('收到搜索结果消息:', request.data.results.length);
+        (async () => {
+            const tab = await getCurrentTab();
+            if (request.tabId != null && tab?.id != null && request.tabId !== tab.id) {
+                console.log('忽略其他标签页的搜索结果消息:', request.tabId, tab.id);
+                sendResponse({ success: false, ignored: true });
+                return;
+            }
 
-        // 如果DOM还未加载完成，等待一下
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', () => {
+            console.log('收到搜索结果消息:', request.data.results.length);
+
+            const renderResults = () => {
                 displaySearchResults(request.data.results, request.data.youtubeVideoId);
                 showStatus(`找到 ${request.data.results.length} 个匹配的B站视频，请选择：`, 'info');
-            });
-        } else {
-            // DOM已就绪，直接显示
-            displaySearchResults(request.data.results, request.data.youtubeVideoId);
-            showStatus(`找到 ${request.data.results.length} 个匹配的B站视频，请选择：`, 'info');
-        }
+            };
 
-        sendResponse({ success: true });
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', renderResults, { once: true });
+            } else {
+                renderResults();
+            }
+
+            sendResponse({ success: true });
+        })().catch((error) => {
+            console.error('处理搜索结果消息失败:', error);
+            sendResponse({ success: false, error: error.message });
+        });
     } else if (request.type === 'displayNoMatchResults') {
-        console.log('收到未匹配结果消息:', request.data);
+        (async () => {
+            const tab = await getCurrentTab();
+            if (request.tabId != null && tab?.id != null && request.tabId !== tab.id) {
+                console.log('忽略其他标签页的未匹配消息:', request.tabId, tab.id);
+                sendResponse({ success: false, ignored: true });
+                return;
+            }
 
-        // 如果DOM还未加载完成，等待一下
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', () => {
+            console.log('收到未匹配结果消息:', request.data);
+
+            const renderNoMatch = () => {
                 updateManualInputUI(false, '', request.data);
                 showStatus('未找到匹配的B站视频，请手动输入或查看B站空间', 'info');
-            });
-        } else {
-            // DOM已就绪，直接显示
-            updateManualInputUI(false, '', request.data);
-            showStatus('未找到匹配的B站视频，请手动输入或查看B站空间', 'info');
-        }
+            };
 
-        sendResponse({ success: true });
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', renderNoMatch, { once: true });
+            } else {
+                renderNoMatch();
+            }
+
+            sendResponse({ success: true });
+        })().catch((error) => {
+            console.error('处理未匹配结果消息失败:', error);
+            sendResponse({ success: false, error: error.message });
+        });
     }
 
     return true; // 保持消息通道开启
@@ -1333,18 +1429,23 @@ browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
 // 消息监听器设置完成后，立即通知background popup已准备好
 console.log('消息监听器已设置，通知background popup准备完成');
-browser.runtime
-    .sendMessage({ type: 'popupReady' })
-    .then((response) => {
+(async () => {
+    try {
+        const tab = await getCurrentTab();
+        const response = await browser.runtime.sendMessage({
+            type: 'popupReady',
+            tabId: tab?.id ?? null
+        });
+
         if (response && response.success) {
             console.log('成功通知background popup已准备完成');
         } else {
             console.log('background暂无待显示的搜索结果');
         }
-    })
-    .catch((error) => {
+    } catch (error) {
         console.log('通知background失败:', error);
-    });
+    }
+})();
 
 // 检查页面类型并切换界面
 async function checkPageTypeAndToggleUI() {
@@ -1393,10 +1494,10 @@ function bindQuarkUIEvents() {
         downloadBtn.setAttribute('data-bound', 'true');
         downloadBtn.addEventListener('click', downloadQuarkDanmaku);
     }
-    
+
     // 设置变更事件
     const settingIds = ['quark-enable-danmaku', 'quark-opacity', 'quark-font-size', 'quark-speed'];
-    settingIds.forEach(id => {
+    settingIds.forEach((id) => {
         const el = document.getElementById(id);
         if (el && !el.hasAttribute('data-bound')) {
             el.setAttribute('data-bound', 'true');
@@ -1406,11 +1507,11 @@ function bindQuarkUIEvents() {
             });
         }
     });
-    
+
     // 时间偏移滑块和输入框同步
     const timeOffsetSlider = document.getElementById('quark-time-offset');
     const timeOffsetInput = document.getElementById('quark-time-offset-input');
-    
+
     if (timeOffsetSlider && !timeOffsetSlider.hasAttribute('data-bound')) {
         timeOffsetSlider.setAttribute('data-bound', 'true');
         timeOffsetSlider.addEventListener('input', () => {
@@ -1420,7 +1521,7 @@ function bindQuarkUIEvents() {
             saveQuarkSettings();
         });
     }
-    
+
     if (timeOffsetInput && !timeOffsetInput.hasAttribute('data-bound')) {
         timeOffsetInput.setAttribute('data-bound', 'true');
         timeOffsetInput.addEventListener('input', () => {
@@ -1432,7 +1533,7 @@ function bindQuarkUIEvents() {
             saveQuarkSettings();
         });
     }
-    
+
     // 加载设置
     loadQuarkSettings();
 }
@@ -1442,7 +1543,7 @@ function updateQuarkSliderValues() {
     const opacityEl = document.getElementById('quark-opacity');
     const fontSizeEl = document.getElementById('quark-font-size');
     const speedEl = document.getElementById('quark-speed');
-    
+
     if (opacityEl) {
         document.getElementById('quark-opacity-value').textContent = opacityEl.value + '%';
     }
@@ -1459,9 +1560,10 @@ async function saveQuarkSettings() {
     // 优先使用输入框的值
     const timeOffsetInput = document.getElementById('quark-time-offset-input');
     const timeOffsetSlider = document.getElementById('quark-time-offset');
-    const timeOffset = timeOffsetInput && timeOffsetInput.value !== ''
-        ? parseFloat(timeOffsetInput.value) || 0
-        : parseFloat(timeOffsetSlider?.value) || 0;
+    const timeOffset =
+        timeOffsetInput && timeOffsetInput.value !== ''
+            ? parseFloat(timeOffsetInput.value) || 0
+            : parseFloat(timeOffsetSlider?.value) || 0;
 
     const settings = {
         enabled: document.getElementById('quark-enable-danmaku')?.checked ?? true,
@@ -1518,7 +1620,7 @@ async function loadQuarkSettings() {
 function showQuarkStatus(message, type = 'loading') {
     const statusBar = document.getElementById('quark-status-bar');
     if (!statusBar) return;
-    
+
     statusBar.textContent = message;
     statusBar.className = `status-bar show ${type}`;
 
@@ -1533,7 +1635,7 @@ function showQuarkStatus(message, type = 'loading') {
 async function downloadQuarkDanmaku() {
     const urlInput = document.getElementById('quark-bilibili-url');
     const url = urlInput?.value?.trim();
-    
+
     if (!url) {
         showQuarkStatus('请输入B站视频链接', 'error');
         return;
@@ -1554,7 +1656,7 @@ async function downloadQuarkDanmaku() {
     // 从 URL 获取 Quark 视频 ID
     const hashMatch = tab.url.match(/#\/video\/([a-zA-Z0-9]+)/);
     const quarkVideoId = hashMatch ? hashMatch[1] : null;
-    
+
     if (!quarkVideoId) {
         showQuarkStatus('请在视频播放页面使用', 'error');
         return;
@@ -1586,7 +1688,7 @@ async function downloadQuarkDanmaku() {
 
         if (response.success) {
             showQuarkStatus(`成功下载 ${response.count} 条弹幕`, 'success');
-            
+
             // 更新弹幕信息显示
             const danmakuInfo = document.getElementById('quark-danmaku-info');
             if (danmakuInfo) {
@@ -1693,32 +1795,32 @@ async function checkQuarkDanmaku() {
 
     const hashMatch = tab.url.match(/#\/video\/([a-zA-Z0-9]+)/);
     const quarkVideoId = hashMatch ? hashMatch[1] : null;
-    
+
     if (!quarkVideoId) return;
 
     const storageKey = `quark_${quarkVideoId}`;
     const result = await browser.storage.local.get(storageKey);
-    
+
     if (result[storageKey] && result[storageKey].danmakus) {
         const data = result[storageKey];
-        
+
         // 显示已加载的弹幕信息
         const danmakuInfo = document.getElementById('quark-danmaku-info');
         if (danmakuInfo) {
             danmakuInfo.textContent = `已加载 ${data.danmakus.length} 条弹幕`;
             danmakuInfo.classList.add('show');
         }
-        
+
         // 显示弹幕列表
         displayQuarkDanmakuList(data.danmakus);
-        
+
         // 填充 URL
         const urlInput = document.getElementById('quark-bilibili-url');
         if (urlInput && data.bilibili_url) {
             urlInput.value = data.bilibili_url;
         }
     }
-    
+
     // 获取并显示视频标题
     try {
         const response = await browser.tabs.sendMessage(tab.id, { type: 'getPageInfo' });
@@ -1810,7 +1912,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         await checkQuarkDanmaku();
         return;
     }
-    
+
     // 如果不是YouTube页面，不需要执行后续的初始化逻辑
     if (pageType !== 'youtube') {
         return;

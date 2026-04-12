@@ -9,6 +9,62 @@ import '../../lib/opencc.min.js';
 export default defineBackground(() => {
     // 页面状态管理
     let tabPageStates = new Map(); // 存储每个标签页的页面状态
+    let pendingSearchResultsByTab = new Map();
+    let pendingNoMatchResultsByTab = new Map();
+
+    function getPendingPopupStorageKey(type, tabId) {
+        return `${type}:${tabId}`;
+    }
+
+    async function getPendingPopupData(type, tabId) {
+        const memoryStore =
+            type === 'pendingSearchResults'
+                ? pendingSearchResultsByTab
+                : pendingNoMatchResultsByTab;
+
+        if (memoryStore.has(tabId)) {
+            return memoryStore.get(tabId);
+        }
+
+        const storageKey = getPendingPopupStorageKey(type, tabId);
+        const result = await browser.storage.local.get(storageKey);
+        return result[storageKey] || null;
+    }
+
+    async function clearPendingPopupData(type, tabId) {
+        const memoryStore =
+            type === 'pendingSearchResults'
+                ? pendingSearchResultsByTab
+                : pendingNoMatchResultsByTab;
+
+        memoryStore.delete(tabId);
+        await browser.storage.local.remove(getPendingPopupStorageKey(type, tabId));
+    }
+
+    async function clearAllPendingPopupData(tabId) {
+        pendingSearchResultsByTab.delete(tabId);
+        pendingNoMatchResultsByTab.delete(tabId);
+        await browser.storage.local.remove([
+            getPendingPopupStorageKey('pendingSearchResults', tabId),
+            getPendingPopupStorageKey('pendingNoMatchResults', tabId)
+        ]);
+    }
+
+    async function setPendingPopupData(type, tabId, data) {
+        if (type === 'pendingSearchResults') {
+            pendingSearchResultsByTab.set(tabId, data);
+            pendingNoMatchResultsByTab.delete(tabId);
+            await browser.storage.local.remove(getPendingPopupStorageKey('pendingNoMatchResults', tabId));
+        } else {
+            pendingNoMatchResultsByTab.set(tabId, data);
+            pendingSearchResultsByTab.delete(tabId);
+            await browser.storage.local.remove(getPendingPopupStorageKey('pendingSearchResults', tabId));
+        }
+
+        await browser.storage.local.set({
+            [getPendingPopupStorageKey(type, tabId)]: data
+        });
+    }
 
     // 页面状态管理函数
     function getTabPageState(tabId) {
@@ -49,6 +105,9 @@ export default defineBackground(() => {
     // 监听标签页关闭事件
     browser.tabs.onRemoved.addListener((tabId) => {
         clearTabPageState(tabId);
+        clearAllPendingPopupData(tabId).catch((error) => {
+            console.log(`清理标签页${tabId}待展示数据失败:`, error);
+        });
     });
 
     // WBI签名相关配置
@@ -1160,19 +1219,19 @@ export default defineBackground(() => {
         return results;
     }
 
-    // 存储待发送的搜索结果
-    let pendingSearchResults = null;
-
-    // 存储待发送的未匹配结果
-    let pendingNoMatchResults = null;
-
     // 处理多个搜索结果的弹窗显示
-    async function handleMultipleResults(request) {
+    async function handleMultipleResults(request, sender) {
         try {
+            const tabId = sender.tab?.id;
+            if (tabId == null) {
+                throw new Error('无法确定搜索结果所属的标签页');
+            }
+
             console.log('处理多个搜索结果弹窗:', request.results.length);
 
             // 暂存搜索结果，等待popup准备好接收
-            pendingSearchResults = {
+            const pendingSearchResults = {
+                tabId: tabId,
                 results: request.results,
                 youtubeVideoId: request.youtubeVideoId,
                 channelInfo: request.channelInfo,
@@ -1180,10 +1239,7 @@ export default defineBackground(() => {
                 timestamp: Date.now()
             };
 
-            // 同时存储到storage作为备用
-            await browser.storage.local.set({
-                pendingSearchResults: pendingSearchResults
-            });
+            await setPendingPopupData('pendingSearchResults', tabId, pendingSearchResults);
 
             // 打开popup窗口
             try {
@@ -1210,22 +1266,25 @@ export default defineBackground(() => {
     }
 
     // 处理未匹配结果的弹窗显示
-    async function handleNoMatchResults(request) {
+    async function handleNoMatchResults(request, sender) {
         try {
+            const tabId = sender.tab?.id;
+            if (tabId == null) {
+                throw new Error('无法确定未匹配结果所属的标签页');
+            }
+
             console.log('处理未匹配结果弹窗:', request.channelInfo);
 
             // 暂存未匹配结果，等待popup准备好接收
-            pendingNoMatchResults = {
+            const pendingNoMatchResults = {
+                tabId: tabId,
                 youtubeVideoId: request.youtubeVideoId,
                 channelInfo: request.channelInfo,
                 videoTitle: request.videoTitle,
                 timestamp: Date.now()
             };
 
-            // 同时存储到storage作为备用
-            await browser.storage.local.set({
-                pendingNoMatchResults: pendingNoMatchResults
-            });
+            await setPendingPopupData('pendingNoMatchResults', tabId, pendingNoMatchResults);
 
             // 打开popup窗口
             try {
@@ -1465,7 +1524,7 @@ export default defineBackground(() => {
             return true; // 保持消息通道开启
         } else if (request.type === 'showMultipleResults') {
             // 新增：处理多个搜索结果的弹窗显示
-            handleMultipleResults(request)
+            handleMultipleResults(request, sender)
                 .then((result) => {
                     sendResponse(result);
                 })
@@ -1479,7 +1538,7 @@ export default defineBackground(() => {
             return true; // 保持消息通道开启
         } else if (request.type === 'showNoMatchResults') {
             // 新增：处理未匹配结果的弹窗显示
-            handleNoMatchResults(request)
+            handleNoMatchResults(request, sender)
                 .then((result) => {
                     sendResponse(result);
                 })
@@ -1497,23 +1556,17 @@ export default defineBackground(() => {
 
             // 处理异步操作
             (async () => {
-                // 优先使用内存中的数据
-                let dataToSend = pendingSearchResults;
-                let noMatchDataToSend = pendingNoMatchResults;
-
-                // 如果内存中没有数据，尝试从storage获取
-                if (!dataToSend && !noMatchDataToSend) {
-                    try {
-                        const result = await browser.storage.local.get([
-                            'pendingSearchResults',
-                            'pendingNoMatchResults'
-                        ]);
-                        dataToSend = result.pendingSearchResults;
-                        noMatchDataToSend = result.pendingNoMatchResults;
-                    } catch (error) {
-                        console.log('获取storage搜索结果失败:', error);
-                    }
+                const popupTabId = request.tabId;
+                if (popupTabId == null) {
+                    sendResponse({ success: false, message: 'missing tab id' });
+                    return;
                 }
+
+                const dataToSend = await getPendingPopupData('pendingSearchResults', popupTabId);
+                const noMatchDataToSend = await getPendingPopupData(
+                    'pendingNoMatchResults',
+                    popupTabId
+                );
 
                 if (dataToSend && dataToSend.results) {
                     // 检查数据是否过期（5分钟内有效）
@@ -1527,13 +1580,15 @@ export default defineBackground(() => {
                             browser.runtime
                                 .sendMessage({
                                     type: 'displayMultipleResults',
+                                    tabId: popupTabId,
                                     data: dataToSend
                                 })
-                                .then(() => {
-                                    // 发送成功后清理storage中的数据
-                                    browser.storage.local.remove('pendingSearchResults');
-                                    pendingSearchResults = null;
-                                    console.log('已清理pendingSearchResults数据');
+                                .then(async () => {
+                                    await clearPendingPopupData(
+                                        'pendingSearchResults',
+                                        popupTabId
+                                    );
+                                    console.log(`已清理标签页${popupTabId}的pendingSearchResults数据`);
                                 })
                                 .catch((error) => {
                                     console.log('发送搜索结果消息失败:', error);
@@ -1543,8 +1598,7 @@ export default defineBackground(() => {
                         sendResponse({ success: true });
                     } else {
                         console.log('搜索结果已过期，清理数据');
-                        pendingSearchResults = null;
-                        browser.storage.local.remove('pendingSearchResults');
+                        await clearPendingPopupData('pendingSearchResults', popupTabId);
                         sendResponse({ success: false, message: 'results expired' });
                     }
                 } else if (noMatchDataToSend) {
@@ -1559,13 +1613,15 @@ export default defineBackground(() => {
                             browser.runtime
                                 .sendMessage({
                                     type: 'displayNoMatchResults',
+                                    tabId: popupTabId,
                                     data: noMatchDataToSend
                                 })
-                                .then(() => {
-                                    // 发送成功后清理storage中的数据
-                                    browser.storage.local.remove('pendingNoMatchResults');
-                                    pendingNoMatchResults = null;
-                                    console.log('已清理pendingNoMatchResults数据');
+                                .then(async () => {
+                                    await clearPendingPopupData(
+                                        'pendingNoMatchResults',
+                                        popupTabId
+                                    );
+                                    console.log(`已清理标签页${popupTabId}的pendingNoMatchResults数据`);
                                 })
                                 .catch((error) => {
                                     console.log('发送未匹配结果消息失败:', error);
@@ -1575,8 +1631,7 @@ export default defineBackground(() => {
                         sendResponse({ success: true });
                     } else {
                         console.log('未匹配结果已过期，清理数据');
-                        pendingNoMatchResults = null;
-                        browser.storage.local.remove('pendingNoMatchResults');
+                        await clearPendingPopupData('pendingNoMatchResults', popupTabId);
                         sendResponse({ success: false, message: 'no match results expired' });
                     }
                 } else {
@@ -1589,9 +1644,16 @@ export default defineBackground(() => {
         } else if (request.type === 'clearSearchResults') {
             // 清理搜索结果
             console.log('清理搜索结果数据');
-            pendingSearchResults = null;
-            pendingNoMatchResults = null;
-            browser.storage.local.remove(['pendingSearchResults', 'pendingNoMatchResults']);
+            const popupTabId = request.tabId ?? sender.tab?.id;
+
+            if (popupTabId == null) {
+                sendResponse({ success: false, error: 'missing tab id' });
+                return true;
+            }
+
+            clearAllPendingPopupData(popupTabId).catch((error) => {
+                console.log(`清理标签页${popupTabId}搜索结果数据失败:`, error);
+            });
             sendResponse({ success: true });
 
             return true;
@@ -1642,23 +1704,30 @@ export default defineBackground(() => {
             // popup请求从background获取页面信息
             (async () => {
                 try {
-                    // 获取当前活跃标签页
-                    const [activeTab] = await browser.tabs.query({
-                        active: true,
-                        currentWindow: true
-                    });
+                    let targetTabId = request.tabId;
+                    let targetTabUrl = request.tabUrl;
 
-                    if (!activeTab || !activeTab.id) {
+                    if (targetTabId == null) {
+                        const [activeTab] = await browser.tabs.query({
+                            active: true,
+                            currentWindow: true
+                        });
+
+                        targetTabId = activeTab?.id;
+                        targetTabUrl = activeTab?.url;
+                    }
+
+                    if (targetTabId == null) {
                         sendResponse({ success: false, error: '无法获取当前标签页' });
                         return;
                     }
 
                     // 检查是否有缓存的页面状态
-                    const cachedState = getTabPageState(activeTab.id);
+                    const cachedState = getTabPageState(targetTabId);
 
                     if (cachedState) {
                         // 验证缓存的URL是否与当前标签页匹配
-                        if (cachedState.url === activeTab.url) {
+                        if (!targetTabUrl || cachedState.url === targetTabUrl) {
                             console.log('使用background缓存的页面信息');
                             sendResponse({
                                 success: true,
@@ -1668,7 +1737,7 @@ export default defineBackground(() => {
                             return;
                         } else {
                             console.log('缓存的URL不匹配，清除过期状态');
-                            clearTabPageState(activeTab.id);
+                            clearTabPageState(targetTabId);
                         }
                     }
 
@@ -1676,7 +1745,7 @@ export default defineBackground(() => {
                     console.log('向content script请求最新页面信息');
 
                     browser.tabs.sendMessage(
-                        activeTab.id,
+                        targetTabId,
                         {
                             type: 'getPageInfo'
                         },
@@ -1692,7 +1761,7 @@ export default defineBackground(() => {
 
                             if (response && response.success) {
                                 // 缓存新获取的信息
-                                setTabPageState(activeTab.id, response.data);
+                                setTabPageState(targetTabId, response.data);
                                 sendResponse({
                                     success: true,
                                     data: response.data,

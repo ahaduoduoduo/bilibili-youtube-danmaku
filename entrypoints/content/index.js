@@ -11,11 +11,113 @@ export default defineContentScript({
         let currentVideoId = null;
         let currentPageInfo = null;
         let pageInfoCache = new Map();
+        let activeInitToken = 0;
+        let pendingInitTimeout = null;
+        const channelNameSelectors = [
+            'yt-formatted-string.ytd-channel-name a',
+            '#channel-name .ytd-channel-name a',
+            '.ytd-video-owner-renderer .ytd-channel-name a',
+            'ytd-channel-name a',
+            '#owner-sub-count a',
+            '.ytd-channel-name a'
+        ];
+        const channelLinkFallbackSelectors = ['a[href*="/@"]', 'a[href*="/channel/"]'];
+        const channelAvatarSelectors = [
+            '#avatar img',
+            '.ytd-video-owner-renderer img',
+            'yt-img-shadow img[alt*="avatar"]',
+            'yt-img-shadow img[alt*="Avatar"]'
+        ];
+        const channelRootSelectors = ['ytd-watch-metadata', '#owner', 'ytd-video-owner-renderer'];
 
         // 获取YouTube视频ID
         function getVideoId() {
             const match = window.location.href.match(/[?&]v=([^&]+)/);
             return match ? match[1] : null;
+        }
+
+        function extractChannelIdFromHref(href) {
+            if (!href) {
+                return '';
+            }
+
+            let match = href.match(/@([^\/\?#]+)/);
+            if (match) {
+                return '@' + match[1];
+            }
+
+            match = href.match(/channel\/([^\/\?#]+)/);
+            return match ? match[1] : '';
+        }
+
+        function getVisibleElements(selectors, root = document) {
+            const elements = [];
+            const seen = new Set();
+
+            for (const selector of selectors) {
+                const matches = root.querySelectorAll(selector);
+                for (const element of matches) {
+                    if (seen.has(element) || !isVisibleElement(element)) {
+                        continue;
+                    }
+
+                    seen.add(element);
+                    elements.push(element);
+                }
+            }
+
+            return elements;
+        }
+
+        function findChannelLinkCandidate() {
+            const visibleRoots = getVisibleElements(channelRootSelectors);
+
+            for (const root of visibleRoots) {
+                const scopedLinks = getVisibleElements(channelNameSelectors, root);
+                const completeLink = scopedLinks.find((element) => {
+                    return element.textContent.trim() && extractChannelIdFromHref(element.href);
+                });
+
+                if (completeLink) {
+                    return completeLink;
+                }
+            }
+
+            const globalCandidates = [
+                ...getVisibleElements(channelNameSelectors),
+                ...getVisibleElements(channelLinkFallbackSelectors)
+            ];
+
+            return (
+                globalCandidates.find((element) => {
+                    return element.textContent.trim() && extractChannelIdFromHref(element.href);
+                }) || globalCandidates[0] || null
+            );
+        }
+
+        function getChannelAvatar(channelLink) {
+            const avatarSearchRoots = [];
+            const ownerRoot = channelLink?.closest('#owner, ytd-video-owner-renderer, ytd-watch-metadata');
+
+            if (ownerRoot) {
+                avatarSearchRoots.push(ownerRoot);
+            }
+
+            avatarSearchRoots.push(...getVisibleElements(channelRootSelectors));
+
+            for (const root of avatarSearchRoots) {
+                const avatar = getVisibleElements(channelAvatarSelectors, root).find(
+                    (element) => !!element.src
+                );
+                if (avatar) {
+                    return avatar.src;
+                }
+            }
+
+            const fallbackAvatar = getVisibleElements(channelAvatarSelectors).find(
+                (element) => !!element.src
+            );
+            return fallbackAvatar ? fallbackAvatar.src : '';
         }
 
         // 获取YouTube频道信息（增强版）
@@ -26,80 +128,11 @@ export default defineContentScript({
                 let channelId = '';
                 let channelAvatar = '';
 
-                // 统一从频道链接元素获取名称和ID
-                const nameSelectors = [
-                    'yt-formatted-string.ytd-channel-name a',
-                    '#channel-name .ytd-channel-name a',
-                    '.ytd-video-owner-renderer .ytd-channel-name a',
-                    'ytd-channel-name a',
-                    '#owner-sub-count a',
-                    '.ytd-channel-name a'
-                ];
-
-                for (const selector of nameSelectors) {
-                    const element = document.querySelector(selector);
-                    if (element && element.textContent.trim()) {
-                        channelName = element.textContent.trim();
-
-                        // 同时从该元素获取频道ID
-                        if (element.href) {
-                            // 优先匹配 @username 格式
-                            let match = element.href.match(/@([^\/\?#]+)/);
-                            if (match) {
-                                channelId = '@' + match[1];
-                            } else {
-                                // 备选：匹配 /channel/UC... 格式
-                                match = element.href.match(/channel\/([^\/\?#]+)/);
-                                if (match) {
-                                    channelId = match[1];
-                                }
-                            }
-                        }
-
-                        // 如果获取到了名称和ID，结束循环
-                        if (channelName && channelId) {
-                            break;
-                        }
-                    }
-                }
-
-                // 如果上面没有获取到ID，尝试查找其他包含频道链接的元素
-                if (!channelId) {
-                    const channelElements = document.querySelectorAll(
-                        'a[href*="/@"], a[href*="/channel/"]'
-                    );
-                    for (const element of channelElements) {
-                        if (element.href) {
-                            // 优先匹配 @username 格式
-                            let match = element.href.match(/@([^\/\?#]+)/);
-                            if (match) {
-                                channelId = '@' + match[1];
-                                break;
-                            } else {
-                                // 备选：匹配 /channel/UC... 格式
-                                match = element.href.match(/channel\/([^\/\?#]+)/);
-                                if (match) {
-                                    channelId = match[1];
-                                    break;
-                                }
-                            }
-                        }
-                    }
-                }
-
-                // 获取频道头像
-                const avatarSelectors = [
-                    '#avatar img',
-                    '.ytd-video-owner-renderer img',
-                    'yt-img-shadow img[alt*="avatar"], yt-img-shadow img[alt*="Avatar"]'
-                ];
-
-                for (const selector of avatarSelectors) {
-                    const element = document.querySelector(selector);
-                    if (element && element.src) {
-                        channelAvatar = element.src;
-                        break;
-                    }
+                const channelLink = findChannelLinkCandidate();
+                if (channelLink) {
+                    channelName = channelLink.textContent.trim();
+                    channelId = extractChannelIdFromHref(channelLink.href);
+                    channelAvatar = getChannelAvatar(channelLink);
                 }
 
                 // 如果信息不完整且重试次数小于2，则重试
@@ -185,7 +218,7 @@ export default defineContentScript({
         }
 
         // 更新当前页面信息
-        async function updateCurrentPageInfo() {
+        async function updateCurrentPageInfo({ forceRefresh = false } = {}) {
             try {
                 const videoId = getVideoId();
                 if (!videoId) {
@@ -194,7 +227,7 @@ export default defineContentScript({
                 }
 
                 // 检查缓存
-                if (pageInfoCache.has(videoId)) {
+                if (!forceRefresh && pageInfoCache.has(videoId)) {
                     const cached = pageInfoCache.get(videoId);
                     // 如果缓存时间在30秒内，直接使用
                     if (Date.now() - cached.timestamp < 30000) {
@@ -206,10 +239,40 @@ export default defineContentScript({
                 console.log('更新页面信息:', videoId);
 
                 // 获取频道信息（可能需要重试）
-                const channelInfo = await getChannelInfo();
+                const initialChannelInfo = await getChannelInfo();
 
                 // 获取视频标题
                 const videoTitle = await getEnhancedVideoTitle(videoId);
+
+                const currentVideoId = getVideoId();
+                if (currentVideoId !== videoId) {
+                    console.log('页面信息更新期间视频已切换，忽略过期结果:', {
+                        requestedVideoId: videoId,
+                        currentVideoId: currentVideoId
+                    });
+                    return null;
+                }
+
+                // YouTube SPA 切换时，频道 DOM 可能会比标题更晚稳定，发布前再校验一次。
+                const revalidatedChannelInfo = await getChannelInfo();
+                const channelInfo = revalidatedChannelInfo.success
+                    ? revalidatedChannelInfo
+                    : initialChannelInfo;
+
+                if (
+                    initialChannelInfo.success &&
+                    revalidatedChannelInfo.success &&
+                    (initialChannelInfo.channelId !== revalidatedChannelInfo.channelId ||
+                        initialChannelInfo.channelName !== revalidatedChannelInfo.channelName)
+                ) {
+                    console.log('页面信息更新期间频道信息发生变化，使用重新校验后的结果:', {
+                        videoId: videoId,
+                        initialChannelId: initialChannelInfo.channelId,
+                        initialChannelName: initialChannelInfo.channelName,
+                        revalidatedChannelId: revalidatedChannelInfo.channelId,
+                        revalidatedChannelName: revalidatedChannelInfo.channelName
+                    });
+                }
 
                 if (channelInfo.success && videoTitle) {
                     const pageInfo = {
@@ -311,34 +374,138 @@ export default defineContentScript({
         }
 
         // 查找视频容器
+        function isVisibleElement(element) {
+            if (!element) {
+                return false;
+            }
+
+            if (!element.isConnected || element.closest('[hidden], [aria-hidden="true"]')) {
+                return false;
+            }
+
+            const style = window.getComputedStyle(element);
+            if (style.display === 'none' || style.visibility === 'hidden') {
+                return false;
+            }
+
+            const rect = element.getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+        }
+
         function findVideoContainer() {
             // 最佳目标：直接包裹 <video> 元素的容器
             const videoContainer = document.querySelector('.html5-video-container');
-            if (videoContainer && videoContainer.offsetHeight > 0) {
+            if (isVisibleElement(videoContainer)) {
                 return videoContainer;
             }
 
-            // 备选方案：<video> 元素的直接父元素
+            // 备选方案：优先使用 <video> 最近的播放器容器
             const video = document.querySelector('video');
-            if (video && video.parentElement && video.parentElement.offsetHeight > 0) {
-                return video.parentElement;
+            if (video) {
+                const closestContainer = video.closest('.html5-video-container');
+                if (isVisibleElement(closestContainer)) {
+                    return closestContainer;
+                }
+
+                if (isVisibleElement(video.parentElement)) {
+                    return video.parentElement;
+                }
             }
 
             // 最后的备选：旧版播放器ID，兼容性考虑
             const moviePlayer = document.querySelector('#movie_player');
-            if (moviePlayer && moviePlayer.offsetHeight > 0) {
+            if (isVisibleElement(moviePlayer)) {
                 return moviePlayer;
             }
 
             return null;
         }
 
+        function isInitTokenCurrent(token) {
+            return token === activeInitToken;
+        }
+
+        function resetDanmakuEngineState() {
+            if (danmakuEngine) {
+                danmakuEngine.destroy();
+                danmakuEngine = null;
+            }
+
+            stopAdStatusMonitoring();
+        }
+
+        async function waitForVideoContainer(token, maxAttempts = 20, delay = 500) {
+            for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+                if (!isInitTokenCurrent(token)) {
+                    return null;
+                }
+
+                const container = findVideoContainer();
+                if (container) {
+                    return container;
+                }
+
+                if (attempt === 1 || attempt === maxAttempts || attempt % 5 === 0) {
+                    const video = document.querySelector('video');
+                    const rect = video ? video.getBoundingClientRect() : null;
+                    console.log('等待视频容器...', {
+                        attempt,
+                        hasVideo: !!video,
+                        videoReadyState: video ? video.readyState : null,
+                        videoSize: rect
+                            ? `${Math.round(rect.width)}x${Math.round(rect.height)}`
+                            : 'N/A'
+                    });
+                }
+
+                await new Promise((resolve) => setTimeout(resolve, delay));
+            }
+
+            return null;
+        }
+
+        function scheduleDanmakuEngineInit({ delay = 1000, updatePageInfo = false } = {}) {
+            activeInitToken += 1;
+            const token = activeInitToken;
+
+            if (pendingInitTimeout) {
+                clearTimeout(pendingInitTimeout);
+            }
+
+            pendingInitTimeout = setTimeout(async () => {
+                pendingInitTimeout = null;
+
+                const initialized = await initDanmakuEngine(token);
+                if (initialized && updatePageInfo && isInitTokenCurrent(token)) {
+                    await updateCurrentPageInfo();
+
+                    setTimeout(() => {
+                        if (!isInitTokenCurrent(token)) {
+                            return;
+                        }
+
+                        updateCurrentPageInfo({ forceRefresh: true }).catch((error) => {
+                            console.log('延迟复查页面信息失败:', error);
+                        });
+                    }, 1500);
+                }
+            }, delay);
+        }
+
         // 初始化弹幕引擎
-        async function initDanmakuEngine() {
-            const container = findVideoContainer();
+        async function initDanmakuEngine(token = activeInitToken) {
+            if (!isInitTokenCurrent(token)) {
+                return false;
+            }
+
+            const container = await waitForVideoContainer(token);
+            if (!isInitTokenCurrent(token)) {
+                return false;
+            }
+
             if (!container) {
                 console.log('未找到视频容器');
-                return;
+                return false;
             }
 
             console.log('找到视频容器:', {
@@ -348,13 +515,7 @@ export default defineContentScript({
                 height: container.offsetHeight
             });
 
-            // 销毁旧的引擎
-            if (danmakuEngine) {
-                danmakuEngine.destroy();
-            }
-
-            // 停止之前的监控
-            stopAdStatusMonitoring();
+            resetDanmakuEngineState();
 
             // 创建新引擎
             danmakuEngine = new DanmakuEngine(container);
@@ -362,22 +523,38 @@ export default defineContentScript({
             // 加载设置
             await loadSettings();
 
+            if (!isInitTokenCurrent(token)) {
+                return false;
+            }
+
             // 尝试加载当前视频的弹幕
             const videoId = getVideoId();
             if (videoId) {
                 const hasExistingDanmaku = await loadDanmakuForVideo(videoId);
 
+                if (!isInitTokenCurrent(token)) {
+                    return false;
+                }
+
                 // 如果没有现有弹幕，触发自动检测
                 if (!hasExistingDanmaku) {
                     // 延迟执行自动检测，确保页面完全加载
                     setTimeout(() => {
-                        autoCheckAndDownloadDanmaku();
+                        if (isInitTokenCurrent(token)) {
+                            autoCheckAndDownloadDanmaku(token);
+                        }
                     }, 1000);
                 }
             }
 
+            if (!isInitTokenCurrent(token)) {
+                return false;
+            }
+
             // 启动广告状态监控
             startAdStatusMonitoring();
+
+            return true;
         }
 
         // 加载设置
@@ -418,8 +595,12 @@ export default defineContentScript({
         }
 
         // 自动检测并下载弹幕
-        async function autoCheckAndDownloadDanmaku() {
+        async function autoCheckAndDownloadDanmaku(token = activeInitToken) {
             try {
+                if (!isInitTokenCurrent(token)) {
+                    return;
+                }
+
                 const videoId = getVideoId();
                 if (!videoId) {
                     console.log('无法获取视频ID，跳过自动检测');
@@ -427,7 +608,11 @@ export default defineContentScript({
                 }
 
                 // 获取频道信息
-                const channelInfo = getChannelInfo();
+                const channelInfo = await getChannelInfo();
+                if (!isInitTokenCurrent(token)) {
+                    return;
+                }
+
                 if (!channelInfo.success || !channelInfo.channelId) {
                     console.log('无法获取频道信息，跳过自动检测');
                     return;
@@ -435,6 +620,10 @@ export default defineContentScript({
 
                 // 获取增强的视频标题（支持多语言原始标题）
                 const videoTitle = await getEnhancedVideoTitle(videoId);
+                if (!isInitTokenCurrent(token)) {
+                    return;
+                }
+
                 if (!videoTitle) {
                     console.log('无法获取视频标题，跳过自动检测');
                     return;
@@ -467,6 +656,10 @@ export default defineContentScript({
                                 episodeNumber: parseResult.episode,
                                 youtubeVideoId: videoId
                             });
+
+                            if (!isInitTokenCurrent(token)) {
+                                return;
+                            }
 
                             if (response.success) {
                                 console.log(`番剧弹幕自动下载成功: ${response.count} 条`);
@@ -502,6 +695,10 @@ export default defineContentScript({
                     channelInfo.channelId
                 );
 
+                if (!isInitTokenCurrent(token)) {
+                    return;
+                }
+
                 if (!association) {
                     console.log('频道未关联B站UP主，跳过自动检测');
                     return;
@@ -529,6 +726,10 @@ export default defineContentScript({
                     youtubeVideoDuration: youtubeVideoDuration
                 });
 
+                if (!isInitTokenCurrent(token)) {
+                    return;
+                }
+
                 if (searchResponse.success && searchResponse.results.length > 0) {
                     console.log(`找到 ${searchResponse.results.length} 个匹配视频`);
 
@@ -543,6 +744,10 @@ export default defineContentScript({
                             youtubeVideoId: videoId,
                             youtubeVideoDuration: youtubeVideoDuration
                         });
+
+                        if (!isInitTokenCurrent(token)) {
+                            return;
+                        }
 
                         if (downloadResponse.success) {
                             console.log(`自动下载弹幕成功: ${downloadResponse.count} 条`);
@@ -614,6 +819,8 @@ export default defineContentScript({
                     pageInfoCache.delete(oldVideoId);
                 }
 
+                resetDanmakuEngineState();
+
                 // 通知background script页面切换
                 browser.runtime
                     .sendMessage({
@@ -625,11 +832,7 @@ export default defineContentScript({
                     .catch((error) => console.log('通知页面切换失败:', error));
 
                 // 延迟初始化，等待页面加载
-                setTimeout(async () => {
-                    await initDanmakuEngine();
-                    // 初始化完成后更新页面信息
-                    await updateCurrentPageInfo();
-                }, 1000);
+                scheduleDanmakuEngineInit({ delay: 1000, updatePageInfo: true });
             }
         }
 
@@ -658,17 +861,25 @@ export default defineContentScript({
 
                         // 优先使用缓存的页面信息
                         if (currentPageInfo && currentPageInfo.videoId === videoId) {
-                            console.log('使用缓存的页面信息');
-                            sendResponse({
-                                success: true,
-                                data: currentPageInfo
+                            const cacheAge = Date.now() - currentPageInfo.timestamp;
+                            if (cacheAge > 1500) {
+                                console.log('使用缓存的页面信息');
+                                sendResponse({
+                                    success: true,
+                                    data: currentPageInfo
+                                });
+                                return;
+                            }
+
+                            console.log('页面信息刚更新，重新校验频道信息...', {
+                                videoId: videoId,
+                                cacheAge: cacheAge
                             });
-                            return;
                         }
 
                         // 重新获取页面信息
                         console.log('重新获取页面信息...');
-                        await updateCurrentPageInfo();
+                        await updateCurrentPageInfo({ forceRefresh: !!currentPageInfo });
 
                         if (currentPageInfo) {
                             sendResponse({
@@ -864,10 +1075,10 @@ export default defineContentScript({
         // 页面加载完成后初始化
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', () => {
-                setTimeout(initDanmakuEngine, 1000);
+                scheduleDanmakuEngineInit({ delay: 1000 });
             });
         } else {
-            setTimeout(initDanmakuEngine, 1000);
+            scheduleDanmakuEngineInit({ delay: 1000 });
         }
     }
 });
