@@ -62,15 +62,24 @@ body {
 #main-container.disabled,
 #simple-container.disabled,
 #quark-container.disabled {
-    opacity: 0.5;
-    filter: grayscale(0.2);
     pointer-events: none;
     user-select: none;
 }
 
-/* Always allow interacting with the global toggle row */
-.toggle-row {
+#main-container.disabled > :not(.controls),
+#quark-container.disabled > :not(.controls),
+#main-container.disabled .controls .control-group:not(.global-toggle-control),
+#quark-container.disabled .controls .control-group:not(.global-toggle-control),
+#simple-container.disabled .simple-content > :not(.global-toggle-control) {
+    opacity: 0.5;
+    filter: grayscale(0.2);
+}
+
+/* Always allow interacting with the global toggle */
+.global-toggle-control,
+.global-toggle-control * {
     pointer-events: auto;
+    user-select: auto;
 }
 
 h1 {
@@ -621,6 +630,10 @@ h1 {
 
 .control-group {
     margin-bottom: 12px;
+}
+
+.global-toggle-control {
+    margin-bottom: 16px;
 }
 
 .control-group label {

@@ -2073,37 +2073,48 @@ function openYouTube() {
 document.addEventListener('DOMContentLoaded', async () => {
     // Initialize global toggle UI
     try {
-        const toggleEl = document.getElementById('globalToggle');
-        if (toggleEl) {
+        const globalToggleEls = Array.from(document.querySelectorAll('[data-global-toggle]'));
+        if (globalToggleEls.length > 0) {
             const enabled = await getExtensionEnabled();
-            toggleEl.checked = !!enabled;
-            attachToggleAnimationHandlers(toggleEl);
+            const syncGlobalToggles = (value) => {
+                globalToggleEls.forEach((toggleEl) => {
+                    toggleEl.checked = !!value;
+                });
+            };
+
+            syncGlobalToggles(enabled);
+
+            globalToggleEls.forEach((toggleEl) => {
+                attachToggleAnimationHandlers(toggleEl);
+                if (toggleEl.hasAttribute('data-bound')) {
+                    return;
+                }
+                toggleEl.setAttribute('data-bound', 'true');
+                toggleEl.addEventListener('change', async () => {
+                    const enabledNow = !!toggleEl.checked;
+                    syncGlobalToggles(enabledNow);
+                    await setExtensionEnabled(enabledNow);
+                    try {
+                        await browser.runtime.sendMessage({
+                            type: 'EXTENSION_GLOBAL_TOGGLE',
+                            enabled: enabledNow
+                        });
+                    } catch (e) {}
+                    applyNetworkAndTimerGuards(!enabledNow);
+                    applyStorageGuards(!enabledNow);
+                    updateExtensionIcon(enabledNow);
+                    setPopupEnabledUI(enabledNow);
+                    if (enabledNow) {
+                        // 重新启用后，刷新一次以完成全部初始化
+                        window.location.reload();
+                    }
+                });
+            });
+
             applyNetworkAndTimerGuards(!enabled);
             applyStorageGuards(!enabled);
             updateExtensionIcon(enabled);
             setPopupEnabledUI(!!enabled);
-            toggleEl.addEventListener('change', async () => {
-                const enabledNow = !!toggleEl.checked;
-                await setExtensionEnabled(enabledNow);
-                try {
-                    await browser.runtime.sendMessage({
-                        type: 'EXTENSION_GLOBAL_TOGGLE',
-                        enabled: enabledNow
-                    });
-                } catch (e) {}
-                applyNetworkAndTimerGuards(!enabledNow);
-                applyStorageGuards(!enabledNow);
-                updateExtensionIcon(enabledNow);
-                setPopupEnabledUI(enabledNow);
-                if (enabledNow) {
-                    // 重新启用后，刷新一次以完成全部初始化
-                    window.location.reload();
-                }
-                if (!enabledNow) {
-                    // Stop further initialization when disabled
-                    // Optionally, we could close the popup or simply return.
-                }
-            });
             // If disabled at load, stop further initialization
             if (!enabled) {
                 // 仍然根据页面类型切换界面，并初始化社交图标
