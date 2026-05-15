@@ -11,10 +11,27 @@ function getPendingStorageKey(type, tabId) {
     return `${type}:${tabId}`;
 }
 
+// 将AV ID转换为BV ID
+function avToBv(avid) {
+    const table = 'fZodR9XQDSUm21yCkr6zBqiveYah8bt4xsWpHnJE7jL5VG3guMTKNPAwcF';
+    const s = [11, 10, 3, 8, 4, 6];
+    const xor = 177451812;
+    const add = 8728348608n;
+    let x = (BigInt(avid) ^ BigInt(xor)) + add;
+    const r = Array.from('BV1  4 1 7  ');
+    for (let i = 0; i < 6; i++) {
+        r[s[i]] = table[Number(x / 58n ** BigInt(i) % 58n)];
+    }
+    return r.join('');
+}
+
 // 解析B站视频ID
 function parseBilibiliUrl(url) {
-    const match = url.match(/bilibili\.com\/video\/(BV\w+)/);
-    return match ? match[1] : null;
+    const bvMatch = url.match(/bilibili\.com\/video\/(BV\w+)/);
+    if (bvMatch) return bvMatch[1];
+    const avMatch = url.match(/bilibili\.com\/video\/av(\d+)/i);
+    if (avMatch) return avToBv(avMatch[1]);
+    return null;
 }
 
 // 获取YouTube视频ID
