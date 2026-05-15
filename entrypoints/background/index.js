@@ -2,13 +2,6 @@
 
 // 导入番剧处理模块
 import { searchBilibiliBangumi, findEpisodeByNumber, getBangumiEpisodeDetail } from './bangumi.js';
-import {
-    getExtensionEnabled,
-    applyNetworkAndTimerGuards,
-    applyStorageGuards,
-    forwardToggleToAllTabs,
-    updateExtensionIcon
-} from '../../utils/globalToggle.js';
 // 引入protobuf解析器和OpenCC库
 import '../../lib/protobuf-parser.js';
 import '../../lib/opencc.min.js';
@@ -18,7 +11,6 @@ export default defineBackground(() => {
     let tabPageStates = new Map(); // 存储每个标签页的页面状态
     let pendingSearchResultsByTab = new Map();
     let pendingNoMatchResultsByTab = new Map();
-    let extensionEnabled = true;
     let cleanupIntervalId = null;
 
     function getPendingPopupStorageKey(type, tabId) {
@@ -84,39 +76,7 @@ export default defineBackground(() => {
         cleanupIntervalId = setInterval(cleanupExpiredPageStates, 60000); // 每分钟清理一次
     }
 
-    function clearCleanupInterval() {
-        if (cleanupIntervalId) {
-            clearInterval(cleanupIntervalId);
-            cleanupIntervalId = null;
-        }
-    }
-
-    function updateGlobalEnabledState(enabled) {
-        extensionEnabled = !!enabled;
-        applyNetworkAndTimerGuards(!extensionEnabled);
-        applyStorageGuards(!extensionEnabled);
-        if (extensionEnabled) {
-            scheduleCleanupInterval();
-        } else {
-            clearCleanupInterval();
-        }
-        forwardToggleToAllTabs(extensionEnabled);
-        updateExtensionIcon(extensionEnabled);
-    }
-
-    // 初始化：加载总开关状态并应用守卫
-    getExtensionEnabled()
-        .then((enabled) => {
-            updateGlobalEnabledState(enabled);
-            if (enabled) {
-                // 延迟启动清理任务，避免启动早期竞争
-                setTimeout(() => scheduleCleanupInterval(), 100);
-            }
-        })
-        .catch(() => {
-            updateGlobalEnabledState(true);
-            setTimeout(() => scheduleCleanupInterval(), 100);
-        });
+    setTimeout(() => scheduleCleanupInterval(), 100);
 
     // 页面状态管理函数
     function getTabPageState(tabId) {
@@ -163,6 +123,10 @@ export default defineBackground(() => {
     });
 
     // WBI签名相关配置
+    const WBI_KEYS_CACHE_STORAGE_KEY = 'bilibili_wbi_keys_cache';
+    const WBI_KEYS_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
+    let wbiKeysMemoryCache = null;
+
     const mixinKeyEncTab = [
         46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49, 33, 9, 42, 19,
         29, 28, 14, 39, 12, 38, 41, 13, 37, 48, 7, 16, 24, 55, 40, 61, 26, 17, 0, 1, 60, 51, 30, 4,
@@ -425,9 +389,58 @@ export default defineBackground(() => {
         return query + '&w_rid=' + wbi_sign;
     }
 
-    // 获取最新的 img_key 和 sub_key
-    async function getWbiKeys() {
+    function isValidWbiKeysCache(cache) {
+        return (
+            cache &&
+            cache.img_key &&
+            cache.sub_key &&
+            Number.isFinite(cache.expiresAt) &&
+            Date.now() < cache.expiresAt
+        );
+    }
+
+    async function readCachedWbiKeys() {
+        if (isValidWbiKeysCache(wbiKeysMemoryCache)) {
+            return wbiKeysMemoryCache;
+        }
+
+        const result = await browser.storage.local.get(WBI_KEYS_CACHE_STORAGE_KEY);
+        const cached = result[WBI_KEYS_CACHE_STORAGE_KEY];
+        if (isValidWbiKeysCache(cached)) {
+            wbiKeysMemoryCache = cached;
+            return cached;
+        }
+
+        return null;
+    }
+
+    async function writeCachedWbiKeys(keys) {
+        const cache = {
+            ...keys,
+            fetchedAt: Date.now(),
+            expiresAt: Date.now() + WBI_KEYS_CACHE_TTL_MS
+        };
+        wbiKeysMemoryCache = cache;
+        await browser.storage.local.set({
+            [WBI_KEYS_CACHE_STORAGE_KEY]: cache
+        });
+        return cache;
+    }
+
+    // 获取最新的 img_key 和 sub_key，6 小时内复用缓存
+    async function getWbiKeys({ forceRefresh = false } = {}) {
+        if (!forceRefresh) {
+            const cached = await readCachedWbiKeys();
+            if (cached) {
+                return {
+                    img_key: cached.img_key,
+                    sub_key: cached.sub_key
+                };
+            }
+        }
+
         const response = await fetch('https://api.bilibili.com/x/web-interface/nav', {
+            credentials: 'include',
             headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                 Referer: 'https://www.bilibili.com/'
@@ -443,12 +456,18 @@ export default defineBackground(() => {
         const img_key = img_url.slice(img_url.lastIndexOf('/') + 1, img_url.lastIndexOf('.'));
         const sub_key = sub_url.slice(sub_url.lastIndexOf('/') + 1, sub_url.lastIndexOf('.'));
 
-        return { img_key, sub_key };
+        const cached = await writeCachedWbiKeys({ img_key, sub_key });
+        return {
+            img_key: cached.img_key,
+            sub_key: cached.sub_key
+        };
     }
 
     // 获取视频信息
     async function getVideoInfo(bvid) {
-        const response = await fetch(`https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`);
+        const response = await fetch(`https://api.bilibili.com/x/web-interface/view?bvid=${bvid}`, {
+            credentials: 'include'
+        });
         const data = await response.json();
 
         if (data.code !== 0) throw new Error(`获取视频信息失败: ${data.message}`);
@@ -458,7 +477,9 @@ export default defineBackground(() => {
             aid: data.data.aid,
             cid: data.data.cid,
             duration: data.data.duration,
-            title: data.data.title
+            title: data.data.title,
+            pic: data.data.pic || '',
+            author: data.data.owner?.name || ''
         };
     }
 
@@ -476,7 +497,9 @@ export default defineBackground(() => {
         const query = encWbi(params, wbiKeys.img_key, wbiKeys.sub_key);
         const url = `https://api.bilibili.com/x/v2/dm/wbi/web/seg.so?${query}`;
 
-        const response = await fetch(url);
+        const response = await fetch(url, {
+            credentials: 'include'
+        });
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
@@ -637,7 +660,7 @@ export default defineBackground(() => {
             const response = await fetch(`https://bsbsb.top/api/skipSegments?videoID=${bvid}`, {
                 headers: {
                     origin: 'chrome-extension://dmkbhbnbpfijhgpnfahfioedledohfja',
-                    'x-ext-version': '1.1.5'
+                    'x-ext-version': '2.0.0'
                 }
             });
 
@@ -731,7 +754,7 @@ export default defineBackground(() => {
             const wbiKeys = await getWbiKeys();
 
             // 2. 获取视频信息
-            const { cid, duration, aid, title } = await getVideoInfo(bvid);
+            const { cid, duration, aid, title, pic, author } = await getVideoInfo(bvid);
 
             // 3. 计算分段数（每段6分钟）
             const segmentCount = Math.ceil(duration / 360);
@@ -805,6 +828,8 @@ export default defineBackground(() => {
             return {
                 danmakus: processedDanmakus,
                 title: title,
+                pic: pic,
+                author: author,
                 duration: duration
             };
         } catch (error) {
@@ -846,6 +871,7 @@ export default defineBackground(() => {
 
             // 发起API请求
             const response = await fetch(apiUrl, {
+                credentials: 'include',
                 headers: {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                     Referer: 'https://www.bilibili.com/',
@@ -923,6 +949,7 @@ export default defineBackground(() => {
 
             // 发起API请求
             const response = await fetch(apiUrl, {
+                credentials: 'include',
                 headers: {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                     Referer: 'https://search.bilibili.com/',
@@ -1006,6 +1033,7 @@ export default defineBackground(() => {
 
             // 发起API请求
             const response = await fetch(apiUrl, {
+                credentials: 'include',
                 headers: {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                     Referer: 'https://search.bilibili.com/',
@@ -1065,14 +1093,101 @@ export default defineBackground(() => {
         }
     }
 
+    function normalizeBilibiliSearchKeyword(keyword) {
+        return String(keyword || '')
+            .replace(/[\p{P}]/gu, ' ')
+            .replace(/\s+/g, ' ')
+            .trim();
+    }
+
+    function removeBracketedSearchTerms(keyword) {
+        return normalizeBilibiliSearchKeyword(
+            String(keyword || '')
+                .replace(/【[^】]*】/g, ' ')
+                .replace(/「[^」]*」/g, ' ')
+                .replace(/『[^』]*』/g, ' ')
+                .replace(/《[^》]*》/g, ' ')
+                .replace(/〈[^〉]*〉/g, ' ')
+                .replace(/（[^）]*）/g, ' ')
+                .replace(/\([^)]*\)/g, ' ')
+                .replace(/\[[^\]]*\]/g, ' ')
+                .replace(/［[^］]*］/g, ' ')
+                .replace(/〔[^〕]*〕/g, ' ')
+                .replace(/\{[^}]*\}/g, ' ')
+        );
+    }
+
+    function isCsrfSearchBlock(data) {
+        return data?.code === -111 && String(data?.message || '').includes('csrf');
+    }
+
+    function normalizeMatchText(text) {
+        return String(text || '').replace(/[^\p{L}\p{N}]/gu, '');
+    }
+
+    function splitTitleSegments(title) {
+        return String(title || '')
+            .split(/\s*(?:[|｜丨]|-{1,2}|:|：)\s*/g)
+            .map((part) => part.trim())
+            .filter(Boolean);
+    }
+
+    function getLongestCommonSubsequenceLength(a, b) {
+        if (!a || !b) return 0;
+
+        const previous = new Array(b.length + 1).fill(0);
+        const current = new Array(b.length + 1).fill(0);
+
+        for (let i = 1; i <= a.length; i++) {
+            for (let j = 1; j <= b.length; j++) {
+                current[j] =
+                    a[i - 1] === b[j - 1]
+                        ? previous[j - 1] + 1
+                        : Math.max(previous[j], current[j - 1]);
+            }
+
+            previous.splice(0, previous.length, ...current);
+            current.fill(0);
+        }
+
+        return previous[b.length];
+    }
+
+    function calculateKeywordMatchRatio(sourceTitle, targetTitle) {
+        const sourceText = normalizeMatchText(sourceTitle);
+        const targetText = normalizeMatchText(targetTitle);
+
+        if (!sourceText || !targetText) return 0;
+
+        const matchLength = getLongestCommonSubsequenceLength(sourceText, targetText);
+        return Math.min(matchLength / sourceText.length, 1);
+    }
+
+    function calculateTitleContainmentRatio(sourceTitle, targetTitle) {
+        const sourceText = normalizeMatchText(sourceTitle);
+        const targetText = normalizeMatchText(targetTitle);
+
+        if (!sourceText || !targetText) return 0;
+        if (targetText.includes(sourceText)) return 1;
+
+        const targetSegments = splitTitleSegments(targetTitle);
+        for (const segment of targetSegments) {
+            const segmentText = normalizeMatchText(segment);
+            if (segmentText && segmentText.includes(sourceText)) {
+                return 1;
+            }
+        }
+
+        return 0;
+    }
+
     // 综合搜索视频（使用 search/all/v2 API）
-    async function searchBilibiliVideoAllV2(keyword) {
+    async function searchBilibiliVideoAllV2(keyword, options = {}) {
         try {
+            const originalKeyword = String(keyword || '');
+            const matchKeyword = String(options.matchKeyword || originalKeyword);
             // 将标点符号替换为空格，优化 B 站搜索体验
-            keyword = keyword
-                .replace(/[\p{P}]/gu, ' ')
-                .replace(/\s+/g, ' ')
-                .trim();
+            keyword = normalizeBilibiliSearchKeyword(originalKeyword);
             console.log(`[searchBilibiliVideoAllV2] 开始搜索: "${keyword}"`);
 
             // 获取WBI Keys
@@ -1081,6 +1196,7 @@ export default defineBackground(() => {
             // 构建API参数（综合搜索只需要 keyword）
             const params = {
                 keyword: keyword,
+                order: 'dm',
                 wts: Math.round(Date.now() / 1000)
             };
 
@@ -1092,6 +1208,7 @@ export default defineBackground(() => {
 
             // 发起API请求
             const response = await fetch(apiUrl, {
+                credentials: 'include',
                 headers: {
                     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
                     Referer: 'https://search.bilibili.com/',
@@ -1110,6 +1227,19 @@ export default defineBackground(() => {
                 '[searchBilibiliVideoAllV2] 搜索结果原始数据:',
                 JSON.stringify(data, null, 2)
             );
+
+            if (isCsrfSearchBlock(data) && !options.skipBracketFallback) {
+                const fallbackKeyword = removeBracketedSearchTerms(originalKeyword);
+                if (fallbackKeyword && fallbackKeyword !== keyword) {
+                    console.log(
+                        `[searchBilibiliVideoAllV2] 搜索被关键词拦截，移除括号内容后重试: "${keyword}" → "${fallbackKeyword}"`
+                    );
+                    return searchBilibiliVideoAllV2(fallbackKeyword, {
+                        skipBracketFallback: true,
+                        matchKeyword: matchKeyword
+                    });
+                }
+            }
 
             if (data.code !== 0) {
                 throw new Error(`API返回错误: ${data.message || '未知错误'}`);
@@ -1157,11 +1287,19 @@ export default defineBackground(() => {
                 const videoResult = data.data.result.find((item) => item.result_type === 'video');
 
                 if (videoResult && videoResult.data) {
-                    for (const video of videoResult.data.slice(0, 5)) {
-                        // 只返回前5个结果
-                        const highlightRatio = calculateHighlightRatio(video.title);
+                    for (const video of videoResult.data.slice(0, 15)) {
+                        // 只返回前15个结果
                         // 去掉 HTML 标签并解码实体
                         const cleanTitle = decodeHtmlEntities(video.title.replace(/<[^>]*>/g, ''));
+                        const emRatio = calculateHighlightRatio(video.title);
+                        const keywordRatio = options.matchKeyword
+                            ? calculateKeywordMatchRatio(matchKeyword, cleanTitle)
+                            : 0;
+                        const containmentRatio = calculateTitleContainmentRatio(
+                            matchKeyword,
+                            cleanTitle
+                        );
+                        const highlightRatio = Math.max(emRatio, keywordRatio, containmentRatio);
                         results.push({
                             bvid: video.bvid,
                             title: cleanTitle,
@@ -1169,6 +1307,7 @@ export default defineBackground(() => {
                             mid: video.mid,
                             pic: video.pic.startsWith('//') ? `https:${video.pic}` : video.pic,
                             play: video.play,
+                            danmaku: Number(video.danmaku ?? video.dm ?? video.video_review ?? 0),
                             duration: video.duration,
                             pubdate: video.pubdate,
                             highlightRatio: highlightRatio // 高亮比例，用于判断匹配度
@@ -1176,6 +1315,8 @@ export default defineBackground(() => {
                     }
                 }
             }
+
+            results.sort((a, b) => (b.danmaku || 0) - (a.danmaku || 0));
 
             console.log(`[searchBilibiliVideoAllV2] 找到 ${results.length} 个视频结果`);
 
@@ -1236,6 +1377,7 @@ export default defineBackground(() => {
                     console.log(`备用搜索API URL: ${apiUrl}`);
 
                     const response = await fetch(apiUrl, {
+                        credentials: 'include',
                         headers: {
                             'User-Agent':
                                 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -1346,6 +1488,8 @@ export default defineBackground(() => {
                 youtubeVideoId: request.youtubeVideoId,
                 channelInfo: request.channelInfo,
                 videoTitle: request.videoTitle,
+                source: request.source || 'legacy-search',
+                matchMode: request.matchMode || 'legacy',
                 timestamp: Date.now()
             };
 
@@ -1391,6 +1535,8 @@ export default defineBackground(() => {
                 youtubeVideoId: request.youtubeVideoId,
                 channelInfo: request.channelInfo,
                 videoTitle: request.videoTitle,
+                source: request.source || 'legacy-search',
+                matchMode: request.matchMode || 'legacy',
                 timestamp: Date.now()
             };
 
@@ -1455,40 +1601,35 @@ export default defineBackground(() => {
     // 扩展启动时清理过期数据
     browser.runtime.onStartup.addListener(() => {
         console.log('浏览器启动');
-        if (extensionEnabled) {
-            console.log('异步清理过期弹幕数据');
-            cleanupExpiredDanmaku();
-        }
+        console.log('异步清理过期弹幕数据');
+        cleanupExpiredDanmaku();
     });
 
     browser.runtime.onInstalled.addListener(() => {
         console.log('扩展安装/更新');
-        if (extensionEnabled) {
-            console.log('异步清理过期弹幕数据');
-            cleanupExpiredDanmaku();
-        }
+        console.log('异步清理过期弹幕数据');
+        cleanupExpiredDanmaku();
     });
 
     // 监听来自popup的消息
     browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
-        if (request && request.type === 'EXTENSION_GLOBAL_TOGGLE') {
-            updateGlobalEnabledState(!!request.enabled);
-            sendResponse({ success: true });
-            return true;
-        }
-
-        if (!extensionEnabled) {
-            sendResponse({ success: false, error: 'extension disabled' });
-            return true;
-        }
         if (request.type === 'downloadDanmaku') {
             downloadAllDanmaku(request.bvid, request.youtubeVideoDuration)
                 .then(async (data) => {
+                    const matchInfo = request.matchInfo || {};
                     // 保存弹幕数据
                     const storageData = {
                         [request.youtubeVideoId]: {
+                            bvid: request.bvid,
                             bilibili_url: `https://www.bilibili.com/video/${request.bvid}`,
                             bilibili_title: data.title,
+                            bilibili_pic: matchInfo.pic || data.pic || '',
+                            bilibili_author: matchInfo.author || data.author || '',
+                            matchRatio:
+                                typeof matchInfo.highlightRatio === 'number'
+                                    ? matchInfo.highlightRatio
+                                    : null,
+                            matchSource: matchInfo.source || 'manual',
                             danmakus: data.danmakus,
                             duration: data.duration,
                             timeOffset: 0,
@@ -1580,12 +1721,23 @@ export default defineBackground(() => {
             // Quark 专用：下载弹幕并保存（使用 quark_ 前缀）
             downloadAllDanmaku(request.bvid, request.videoDuration)
                 .then(async (data) => {
+                    const matchInfo = request.matchInfo || {};
                     // 保存弹幕数据（使用 quark_ 前缀）
-                    const storageKey = `quark_${request.quarkVideoId}`;
+                    const storageKey = request.quarkVideoId?.startsWith('quark_')
+                        ? request.quarkVideoId
+                        : `quark_${request.quarkVideoId}`;
                     const storageData = {
                         [storageKey]: {
+                            bvid: request.bvid,
                             bilibili_url: `https://www.bilibili.com/video/${request.bvid}`,
                             bilibili_title: data.title,
+                            bilibili_pic: matchInfo.pic || data.pic || '',
+                            bilibili_author: matchInfo.author || data.author || '',
+                            matchRatio:
+                                typeof matchInfo.highlightRatio === 'number'
+                                    ? matchInfo.highlightRatio
+                                    : null,
+                            matchSource: matchInfo.source || 'search',
                             danmakus: data.danmakus,
                             duration: data.duration,
                             timeOffset: 0,

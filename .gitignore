@@ -7,3 +7,8 @@ assets/create-icons.html
 node_modules/
 .output/
 .wxt/
+.cursor-input-socket
+DETAILS.md
+TODO.md
+.docs/
+docs/youtube-title-match.md

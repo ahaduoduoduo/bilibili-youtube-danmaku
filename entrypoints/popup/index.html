@@ -10,13 +10,6 @@
         <!-- 非YouTube页面的简化界面 -->
         <div class="simple-container" id="simple-container" style="display: none">
             <div class="simple-content">
-                <div class="control-group global-toggle-control">
-                    <label class="toggle">
-                        <span class="toggle-label">全局开关</span>
-                        <input type="checkbox" id="simple-global-toggle" data-global-toggle />
-                        <span class="toggle-slider" aria-hidden="true"></span>
-                    </label>
-                </div>
                 <h2>当前不是 Youtube 页面哦</h2>
                 <!-- 社交图标区域 -->
                 <div class="social-icons" id="social-icons-simple" style="display: none"></div>
@@ -47,8 +40,27 @@
                 </div>
             </div>
 
+            <!-- 已匹配视频 -->
+            <div class="quark-match-card" id="quark-match-card" style="display: none">
+                <div class="quark-match-status">已匹配</div>
+                <div class="quark-match-main">
+                    <img id="quark-match-cover" class="quark-match-cover" src="" alt="" />
+                    <div class="quark-match-content">
+                        <div class="quark-match-title" id="quark-match-title"></div>
+                        <div class="quark-match-meta">
+                            <span id="quark-match-author"></span>
+                            <span id="quark-match-ratio"></span>
+                        </div>
+                    </div>
+                </div>
+                <div class="quark-match-actions">
+                    <button type="button" id="quark-view-bilibili-btn">在 B 站查看</button>
+                    <button type="button" id="quark-manual-match-btn">手动匹配</button>
+                </div>
+            </div>
+
             <!-- 手动输入区域 -->
-            <div class="manual-input">
+            <div class="manual-input" id="quark-manual-input">
                 <div class="input-group">
                     <label for="quark-bilibili-url">输入B站视频链接：</label>
                     <input
@@ -67,14 +79,6 @@
             <div class="danmaku-info" id="quark-danmaku-info"></div>
 
             <div class="controls">
-                <div class="control-group global-toggle-control">
-                    <label class="toggle">
-                        <span class="toggle-label">全局开关</span>
-                        <input type="checkbox" id="quark-global-toggle" data-global-toggle />
-                        <span class="toggle-slider" aria-hidden="true"></span>
-                    </label>
-                </div>
-
                 <div class="control-group">
                     <label class="toggle">
                         <span class="toggle-label">弹幕开关</span>
@@ -103,6 +107,27 @@
                     />
                     <span id="quark-match-threshold-value">90%</span>
                     <p class="control-hint">大于匹配度的弹幕会自动下载</p>
+                </div>
+
+                <div class="control-group" id="quark-multi-match-group" style="display: none">
+                    <label>多匹配处理方式：</label>
+                    <div class="display-area-buttons quark-multi-match-buttons">
+                        <button
+                            type="button"
+                            class="display-area-btn quark-multi-match-btn active"
+                            data-value="mostDanmaku"
+                        >
+                            弹幕最多
+                        </button>
+                        <button
+                            type="button"
+                            class="display-area-btn quark-multi-match-btn"
+                            data-value="manualSelect"
+                        >
+                            弹出选择
+                        </button>
+                    </div>
+                    <p class="control-hint">多个结果达到匹配度时的处理方式</p>
                 </div>
 
                 <div class="control-group">
@@ -259,6 +284,25 @@
                 </div>
             </div>
 
+            <!-- YouTube 已匹配视频 -->
+            <div class="youtube-match-card" id="youtube-match-card" style="display: none">
+                <div class="youtube-match-status">已匹配</div>
+                <div class="youtube-match-main">
+                    <img id="youtube-match-cover" class="youtube-match-cover" src="" alt="" />
+                    <div class="youtube-match-content">
+                        <div class="youtube-match-title" id="youtube-match-title"></div>
+                        <div class="youtube-match-meta">
+                            <span id="youtube-match-author"></span>
+                            <span id="youtube-match-ratio"></span>
+                        </div>
+                    </div>
+                </div>
+                <div class="youtube-match-actions">
+                    <button type="button" id="youtube-view-bilibili-btn">在 B 站查看</button>
+                    <button type="button" id="youtube-manual-match-btn">手动匹配</button>
+                </div>
+            </div>
+
             <!-- B站UP主关联区域 -->
             <div class="association-section" id="association-section" style="display: none">
                 <div class="association-header">
@@ -284,7 +328,17 @@
 
             <!-- 自动搜索结果 -->
             <div class="search-results" id="search-results" style="display: none">
-                <h3>搜索结果</h3>
+                <div class="youtube-search-header">
+                    <h3>B站弹幕</h3>
+                    <div class="youtube-search-box">
+                        <input
+                            type="text"
+                            id="youtube-search-input"
+                            placeholder="输入视频标题搜索"
+                        />
+                        <button type="button" id="youtube-search-btn" title="搜索">搜索</button>
+                    </div>
+                </div>
                 <div id="search-status"></div>
                 <div id="search-list"></div>
             </div>
@@ -313,20 +367,68 @@
             <div class="status-bar" id="status-bar"></div>
 
             <div class="controls">
-                <div class="control-group global-toggle-control">
-                    <label class="toggle">
-                        <span class="toggle-label">全局开关</span>
-                        <input type="checkbox" id="youtube-global-toggle" data-global-toggle />
-                        <span class="toggle-slider" aria-hidden="true"></span>
-                    </label>
-                </div>
-
                 <div class="control-group">
                     <label class="toggle">
                         <span class="toggle-label">弹幕开关</span>
                         <input type="checkbox" id="enable-danmaku" checked />
                         <span class="toggle-slider" aria-hidden="true"></span>
                     </label>
+                </div>
+
+                <div class="control-group" id="youtube-match-threshold-group">
+                    <label for="youtube-match-threshold">标题匹配度：</label>
+                    <input
+                        type="range"
+                        id="youtube-match-threshold"
+                        min="50"
+                        max="100"
+                        value="90"
+                        step="5"
+                    />
+                    <span id="youtube-match-threshold-value">90%</span>
+                    <p class="control-hint">大于匹配度的弹幕会自动下载</p>
+                </div>
+
+                <div class="control-group" id="youtube-multi-match-group">
+                    <label>多匹配处理方式：</label>
+                    <div class="display-area-buttons youtube-multi-match-buttons">
+                        <button
+                            type="button"
+                            class="display-area-btn youtube-multi-match-btn active"
+                            data-value="mostDanmaku"
+                        >
+                            弹幕最多
+                        </button>
+                        <button
+                            type="button"
+                            class="display-area-btn youtube-multi-match-btn"
+                            data-value="manualSelect"
+                        >
+                            弹出选择
+                        </button>
+                    </div>
+                    <p class="control-hint">多个结果达到匹配度时的处理方式</p>
+                </div>
+
+                <div class="control-group" id="youtube-match-mode-group">
+                    <label>识别模式：</label>
+                    <div class="display-area-buttons youtube-match-mode-buttons">
+                        <button
+                            type="button"
+                            class="display-area-btn youtube-match-mode-btn active"
+                            data-value="autoDownload"
+                        >
+                            新版模式
+                        </button>
+                        <button
+                            type="button"
+                            class="display-area-btn youtube-match-mode-btn"
+                            data-value="legacy"
+                        >
+                            旧版模式
+                        </button>
+                    </div>
+                    <p class="control-hint">新版按视频标题搜索 B 站，旧版使用 UP 关联和空间搜索</p>
                 </div>
 
                 <div class="control-group">
@@ -390,11 +492,39 @@
                 <div class="control-group">
                     <label>显示区域：</label>
                     <div class="display-area-buttons">
-                        <button type="button" class="display-area-btn" data-value="10">10%</button>
-                        <button type="button" class="display-area-btn" data-value="25">25%</button>
-                        <button type="button" class="display-area-btn" data-value="50">50%</button>
-                        <button type="button" class="display-area-btn" data-value="75">75%</button>
-                        <button type="button" class="display-area-btn active" data-value="100">
+                        <button
+                            type="button"
+                            class="display-area-btn youtube-display-area-btn"
+                            data-value="10"
+                        >
+                            10%
+                        </button>
+                        <button
+                            type="button"
+                            class="display-area-btn youtube-display-area-btn"
+                            data-value="25"
+                        >
+                            25%
+                        </button>
+                        <button
+                            type="button"
+                            class="display-area-btn youtube-display-area-btn"
+                            data-value="50"
+                        >
+                            50%
+                        </button>
+                        <button
+                            type="button"
+                            class="display-area-btn youtube-display-area-btn"
+                            data-value="75"
+                        >
+                            75%
+                        </button>
+                        <button
+                            type="button"
+                            class="display-area-btn youtube-display-area-btn active"
+                            data-value="100"
+                        >
                             100%
                         </button>
                     </div>

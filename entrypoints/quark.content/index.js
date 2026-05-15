@@ -7,11 +7,6 @@
 
 import './danmaku.css';
 import DanmakuEngine from '../../utils/danmaku-engine.js';
-import {
-    getExtensionEnabled,
-    applyNetworkAndTimerGuards,
-    applyStorageGuards
-} from '../../utils/globalToggle.js';
 
 export default defineContentScript({
     matches: ['*://pan.quark.cn/*'],
@@ -25,16 +20,26 @@ export default defineContentScript({
         let cachedSearchResults = null; // 缓存搜索结果
         let cachedSearchKeyword = ''; // 缓存搜索关键词
         let danmakuButtonAdded = false; // 是否已添加按钮
-        let extensionEnabled = true;
         let pendingInitTimeout = null;
         let danmakuButtonObserver = null;
         let updateButtonPositionHandler = null;
+        let currentVideoKey = null;
+        let currentVideoTitle = '';
+        let videoTitleObserver = null;
+        let videoTitleObserverTarget = null;
+        let videoChangeCheckTimeout = null;
+        let videoChangePollInterval = null;
+        let handlingVideoSwitch = false;
+        let syncScrollHandler = null;
+        let fullscreenChangeHandler = null;
+        let cachedSelectedBvid = null;
 
         // ==================== B站弹幕按钮和浮窗相关函数 ====================
 
         // 清理夸克视频标题（去掉后缀、日期前缀等）
-        function cleanQuarkVideoTitle(title) {
+        function cleanQuarkVideoTitle(title, options = {}) {
             if (!title) return '';
+            const { log = true } = options;
 
             let cleaned = title;
 
@@ -53,12 +58,13 @@ export default defineContentScript({
             // 去掉多余空格
             cleaned = cleaned.trim();
 
-            console.log(`[Quark] 标题清理: "${title}" → "${cleaned}"`);
+            if (log) {
+                console.log(`[Quark] 标题清理: "${title}" → "${cleaned}"`);
+            }
             return cleaned;
         }
 
-        // 获取视频标题
-        function getVideoTitle() {
+        function getVideoTitleElement() {
             // 夸克网盘页面标题选择器（按优先级排序）
             const selectors = [
                 '[class*="header-tit"]', // 页面顶部标题 header--header-tit--xxx
@@ -71,19 +77,33 @@ export default defineContentScript({
                 if (el) {
                     const text = el.textContent?.trim() || el.innerText?.trim();
                     if (text && text.length > 0) {
-                        console.log(`[Quark] 找到标题 (${selector}): "${text}"`);
-                        return text;
+                        return { el, selector, text };
                     }
                 }
             }
 
-            console.log('[Quark] 未找到视频标题');
+            return null;
+        }
+
+        // 获取视频标题
+        function getVideoTitle(options = {}) {
+            const { log = true } = options;
+            const titleInfo = getVideoTitleElement();
+            if (titleInfo) {
+                if (log) {
+                    console.log(`[Quark] 找到标题 (${titleInfo.selector}): "${titleInfo.text}"`);
+                }
+                return titleInfo.text;
+            }
+
+            if (log) {
+                console.log('[Quark] 未找到视频标题');
+            }
             return null;
         }
 
         // 添加"B站弹幕"按钮（使用固定定位，放在播放历史右侧）
         function addDanmakuButton() {
-            if (!extensionEnabled) return;
             if (danmakuButtonAdded) return;
 
             // 查找播放历史按钮
@@ -167,11 +187,7 @@ export default defineContentScript({
 
             const showPopover = () => {
                 clearTimeout(hideTimeout);
-                updateButtonPosition(); // 确保位置正确
-                const btnRect = danmakuBtn.getBoundingClientRect();
-                popover.style.top = `${btnRect.bottom + 10}px`;
-                popover.style.left = `${btnRect.left}px`;
-                popover.classList.add('qb-popover-visible');
+                showDanmakuPopover();
 
                 // 如果有缓存的搜索结果，显示它们
                 if (cachedSearchResults && cachedSearchResults.length > 0) {
@@ -215,6 +231,7 @@ export default defineContentScript({
 
                     if (response.success && response.results && response.results.length > 0) {
                         cachedSearchResults = response.results;
+                        await refreshSelectedBvidForCurrentVideo();
                         renderSearchResults(response.results);
                     } else {
                         content.innerHTML = '<div class="qb-popover-empty">未找到相关视频</div>';
@@ -234,28 +251,144 @@ export default defineContentScript({
             console.log('[Quark] B站弹幕按钮已添加');
         }
 
+        function showDanmakuPopover() {
+            const danmakuBtn = document.getElementById('qb-danmaku-btn');
+            const popover = document.getElementById('qb-danmaku-popover');
+            if (!danmakuBtn || !popover) {
+                return false;
+            }
+
+            if (updateButtonPositionHandler) {
+                updateButtonPositionHandler();
+            }
+
+            const btnRect = danmakuBtn.getBoundingClientRect();
+            popover.style.top = `${btnRect.bottom + 10}px`;
+            popover.style.left = `${btnRect.left}px`;
+            popover.classList.add('qb-popover-visible');
+            return true;
+        }
+
+        function extractBvidFromDanmakuData(data) {
+            if (!data) return null;
+            if (data.bvid) return data.bvid;
+
+            const match = data.bilibili_url?.match(/\/video\/(BV\w+)/i);
+            return match ? match[1] : null;
+        }
+
+        async function refreshSelectedBvidForCurrentVideo(
+            identity = getCurrentQuarkVideoIdentity()
+        ) {
+            if (!identity) {
+                cachedSelectedBvid = null;
+                return null;
+            }
+
+            const result = await browser.storage.local.get(identity.storageKey);
+            cachedSelectedBvid = extractBvidFromDanmakuData(result[identity.storageKey]);
+            return cachedSelectedBvid;
+        }
+
+        function getSelectionMarkerHtml(isCurrentSelection) {
+            if (!isCurrentSelection) return '';
+            return '<div class="qb-popover-selection-check">✓</div>';
+        }
+
+        function getSelectionLabelHtml(isCurrentSelection) {
+            if (!isCurrentSelection) return '';
+            return '<div class="qb-popover-selection-label">当前选择</div>';
+        }
+
+        function markCurrentSelectionInPopover(bvid) {
+            cachedSelectedBvid = bvid || null;
+
+            const content = document.getElementById('qb-popover-content');
+            if (!content) return;
+
+            content.querySelectorAll('.qb-popover-item').forEach((item) => {
+                const isCurrentSelection = !!bvid && item.dataset.bvid === bvid;
+                item.classList.toggle('qb-current-selection', isCurrentSelection);
+
+                item.querySelector('.qb-popover-selection-check')?.remove();
+                item.querySelector('.qb-popover-selection-label')?.remove();
+
+                if (isCurrentSelection) {
+                    item.querySelector('.qb-popover-item-cover')?.insertAdjacentHTML(
+                        'beforeend',
+                        getSelectionMarkerHtml(true)
+                    );
+                    item.querySelector('.qb-popover-item-media')?.insertAdjacentHTML(
+                        'beforeend',
+                        getSelectionLabelHtml(true)
+                    );
+                }
+            });
+        }
+
+        function getCachedSearchResultByBvid(bvid) {
+            return cachedSearchResults?.find((video) => video.bvid === bvid) || null;
+        }
+
+        function buildQuarkMatchInfo(video, source = 'search') {
+            if (!video) return { source };
+
+            return {
+                source,
+                bvid: video.bvid,
+                title: video.title,
+                author: video.author,
+                pic: video.pic,
+                duration: video.duration,
+                highlightRatio: video.highlightRatio
+            };
+        }
+
+        function getSearchResultDanmakuCount(video) {
+            const count = Number(video?.danmaku ?? video?.dm ?? 0);
+            return Number.isFinite(count) ? count : 0;
+        }
+
+        function getMostDanmakuResult(results) {
+            return [...results].sort(
+                (a, b) => getSearchResultDanmakuCount(b) - getSearchResultDanmakuCount(a)
+            )[0];
+        }
+
+        function sortResultsByDanmaku(results) {
+            return [...results].sort(
+                (a, b) => getSearchResultDanmakuCount(b) - getSearchResultDanmakuCount(a)
+            );
+        }
+
         // 渲染搜索结果到弹窗
         function renderSearchResults(results) {
             const content = document.getElementById('qb-popover-content');
             if (!content) return;
 
-            content.innerHTML = results
-                .map(
-                    (video, index) => `
-                <div class="qb-popover-item" data-bvid="${video.bvid}" data-index="${index}">
-                    <div class="qb-popover-item-cover">
-                        <img src="${video.pic}" alt="" referrerpolicy="no-referrer" />
-                        <div class="qb-popover-item-overlay" style="display:none;">
-                            <span class="qb-loading-spinner"></span>
+            content.innerHTML = sortResultsByDanmaku(results)
+                .map((video, index) => {
+                    const isCurrentSelection =
+                        !!cachedSelectedBvid && video.bvid === cachedSelectedBvid;
+                    return `
+                <div class="qb-popover-item ${isCurrentSelection ? 'qb-current-selection' : ''}" data-bvid="${video.bvid}" data-index="${index}">
+                    <div class="qb-popover-item-media">
+                        <div class="qb-popover-item-cover">
+                            <img src="${video.pic}" alt="" referrerpolicy="no-referrer" />
+                            ${getSelectionMarkerHtml(isCurrentSelection)}
+                            <div class="qb-popover-item-overlay" style="display:none;">
+                                <span class="qb-loading-spinner"></span>
+                            </div>
                         </div>
+                        ${getSelectionLabelHtml(isCurrentSelection)}
                     </div>
                     <div class="qb-popover-item-info">
                         <div class="qb-popover-item-title" title="${video.title.replace(/"/g, '&quot;')}">${video.title}</div>
                         <div class="qb-popover-item-author">UP: ${video.author} · ${video.duration} · 匹配${Math.round((video.highlightRatio || 0) * 100)}%</div>
                     </div>
                 </div>
-            `
-                )
+            `;
+                })
                 .join('');
 
             // 绑定点击事件
@@ -267,7 +400,9 @@ export default defineContentScript({
         // 处理列表项点击（下载弹幕）
         async function handleItemClick(itemElement) {
             const bvid = itemElement.dataset.bvid;
-            const videoId = getQuarkVideoId();
+            const matchedVideo = getCachedSearchResultByBvid(bvid);
+            const identity = getCurrentQuarkVideoIdentity();
+            const videoId = identity?.key;
             if (!videoId || !bvid) return;
 
             // 显示加载覆盖层
@@ -285,11 +420,13 @@ export default defineContentScript({
                     type: 'downloadDanmakuForQuark',
                     bvid: bvid,
                     quarkVideoId: videoId,
-                    videoDuration: videoDuration
+                    videoDuration: videoDuration,
+                    matchInfo: buildQuarkMatchInfo(matchedVideo, 'manual-select')
                 });
 
                 if (response.success) {
                     console.log(`[Quark] 弹幕下载成功: ${response.count} 条`);
+                    cachedSelectedBvid = bvid;
 
                     // 显示成功状态
                     if (overlay) {
@@ -302,6 +439,7 @@ export default defineContentScript({
                         await initDanmakuEngine();
                     }
                     await loadDanmakuForVideo(videoId);
+                    markCurrentSelectionInPopover(bvid);
 
                     // 2秒后隐藏覆盖层
                     setTimeout(() => {
@@ -327,14 +465,14 @@ export default defineContentScript({
         }
 
         // 自动下载弹幕（如果匹配度足够高）
-        async function autoDownloadDanmaku(bvid, highlightRatio) {
-            if (!extensionEnabled) return;
-
-            const videoId = getQuarkVideoId();
+        async function autoDownloadDanmaku(searchResult) {
+            const identity = getCurrentQuarkVideoIdentity();
+            const videoId = identity?.key;
+            const bvid = searchResult?.bvid;
             if (!videoId || !bvid) return;
 
             console.log(
-                `[Quark] 自动下载弹幕: ${bvid}, 匹配度: ${Math.round(highlightRatio * 100)}%`
+                `[Quark] 自动下载弹幕: ${bvid}, 匹配度: ${Math.round((searchResult.highlightRatio || 0) * 100)}%`
             );
 
             try {
@@ -345,17 +483,20 @@ export default defineContentScript({
                     type: 'downloadDanmakuForQuark',
                     bvid: bvid,
                     quarkVideoId: videoId,
-                    videoDuration: videoDuration
+                    videoDuration: videoDuration,
+                    matchInfo: buildQuarkMatchInfo(searchResult, 'auto')
                 });
 
                 if (response.success) {
                     console.log(`[Quark] 自动下载成功: ${response.count} 条弹幕`);
+                    cachedSelectedBvid = bvid;
 
                     // 初始化弹幕引擎并加载弹幕
                     if (!danmakuEngine) {
                         await initDanmakuEngine();
                     }
                     await loadDanmakuForVideo(videoId);
+                    markCurrentSelectionInPopover(bvid);
                 } else {
                     console.error('[Quark] 自动下载失败:', response.error);
                 }
@@ -366,16 +507,15 @@ export default defineContentScript({
 
         // 后台自动搜索（不显示浮窗）
         async function backgroundSearchBilibiliVideo() {
-            if (!extensionEnabled) return;
-
-            const videoId = getQuarkVideoId();
-            if (!videoId) return;
+            const identity = getCurrentQuarkVideoIdentity();
+            if (!identity) return;
+            updateCurrentVideoIdentity(identity);
 
             // 获取并清理视频标题
-            const rawTitle = getVideoTitle();
+            const rawTitle = identity.rawTitle || getVideoTitle();
             if (!rawTitle) return;
 
-            const cleanedTitle = cleanQuarkVideoTitle(rawTitle);
+            const cleanedTitle = identity.cleanedTitle || cleanQuarkVideoTitle(rawTitle);
             if (!cleanedTitle || cleanedTitle.length < 2) return;
 
             cachedSearchKeyword = cleanedTitle;
@@ -399,6 +539,7 @@ export default defineContentScript({
                 if (response.success && response.results && response.results.length > 0) {
                     cachedSearchResults = response.results;
                     console.log(`[Quark] 已缓存 ${response.results.length} 个搜索结果`);
+                    await refreshSelectedBvidForCurrentVideo(identity);
 
                     // 检查是否开启自动下载
                     const settingsResult = await browser.storage.local.get('danmakuSettings');
@@ -406,16 +547,34 @@ export default defineContentScript({
 
                     if (settings.autoDownload) {
                         const matchThreshold = (settings.matchThreshold || 90) / 100;
-                        const firstResult = response.results[0];
+                        const matchedResults = response.results.filter(
+                            (result) => (result.highlightRatio || 0) >= matchThreshold
+                        );
 
-                        if (firstResult.highlightRatio >= matchThreshold) {
+                        if (matchedResults.length === 1) {
+                            const autoDownloadResult = matchedResults[0];
                             console.log(
-                                `[Quark] 匹配度 ${Math.round(firstResult.highlightRatio * 100)}% >= ${Math.round(matchThreshold * 100)}%，自动下载弹幕`
+                                `[Quark] 仅 1 个结果达到 ${Math.round(matchThreshold * 100)}%，自动下载弹幕`
                             );
-                            await autoDownloadDanmaku(firstResult.bvid, firstResult.highlightRatio);
+                            await autoDownloadDanmaku(autoDownloadResult);
+                        } else if (matchedResults.length > 1) {
+                            const multiMatchMode = settings.multiMatchMode || 'mostDanmaku';
+                            if (multiMatchMode === 'mostDanmaku') {
+                                const autoDownloadResult = getMostDanmakuResult(matchedResults);
+                                console.log(
+                                    `[Quark] ${matchedResults.length} 个结果达到 ${Math.round(matchThreshold * 100)}%，按 danmaku 字段选择弹幕最多结果: ${autoDownloadResult.bvid}, ${getSearchResultDanmakuCount(autoDownloadResult)} 条`
+                                );
+                                await autoDownloadDanmaku(autoDownloadResult);
+                            } else {
+                                console.log(
+                                    `[Quark] ${matchedResults.length} 个结果达到 ${Math.round(matchThreshold * 100)}%，弹出选择面板`
+                                );
+                                renderSearchResults(response.results);
+                                showDanmakuPopover();
+                            }
                         } else {
                             console.log(
-                                `[Quark] 匹配度 ${Math.round(firstResult.highlightRatio * 100)}% < ${Math.round(matchThreshold * 100)}%，不自动下载`
+                                `[Quark] 没有结果达到 ${Math.round(matchThreshold * 100)}%，不自动下载`
                             );
                         }
                     }
@@ -432,6 +591,40 @@ export default defineContentScript({
             const hash = window.location.hash;
             const match = hash.match(/#\/video\/([a-zA-Z0-9]+)/);
             return match ? match[1] : null;
+        }
+
+        function hashQuarkText(text) {
+            let hash = 0;
+            for (let i = 0; i < text.length; i++) {
+                hash = (hash << 5) - hash + text.charCodeAt(i);
+                hash |= 0;
+            }
+            return Math.abs(hash).toString(36);
+        }
+
+        function getCurrentQuarkVideoIdentity() {
+            const routeId = getQuarkVideoId();
+            if (!routeId) return null;
+
+            const rawTitle = getVideoTitle({ log: false }) || '';
+            const cleanedTitle = cleanQuarkVideoTitle(rawTitle, { log: false });
+            const titleForKey = cleanedTitle || rawTitle.trim();
+            const key = titleForKey ? `${routeId}_${hashQuarkText(titleForKey)}` : routeId;
+
+            return {
+                routeId,
+                key,
+                rawTitle,
+                cleanedTitle,
+                storageKey: `quark_${key}`
+            };
+        }
+
+        function updateCurrentVideoIdentity(identity) {
+            if (!identity) return;
+            currentVideoId = identity.key;
+            currentVideoKey = identity.key;
+            currentVideoTitle = identity.rawTitle || identity.cleanedTitle || '';
         }
 
         // 检查是否在视频播放页面
@@ -545,11 +738,6 @@ export default defineContentScript({
 
         // 初始化弹幕引擎
         async function initDanmakuEngine() {
-            if (!extensionEnabled) {
-                console.log('[Quark] 全局开关已关闭，跳过初始化');
-                return false;
-            }
-
             if (!isVideoPage()) {
                 console.log('[Quark] 非视频播放页面，跳过初始化');
                 return false;
@@ -620,20 +808,24 @@ export default defineContentScript({
             );
 
             // 监听滚动事件（非全屏时 fixed 定位需要跟随位置）
-            window.addEventListener(
-                'scroll',
-                () => {
-                    const fullscreenElement =
-                        document.fullscreenElement || document.webkitFullscreenElement;
-                    if (!fullscreenElement) {
-                        syncStageWithVideo();
-                    }
-                },
-                { passive: true }
-            );
+            if (syncScrollHandler) {
+                window.removeEventListener('scroll', syncScrollHandler);
+            }
+            syncScrollHandler = () => {
+                const fullscreenElement =
+                    document.fullscreenElement || document.webkitFullscreenElement;
+                if (!fullscreenElement) {
+                    syncStageWithVideo();
+                }
+            };
+            window.addEventListener('scroll', syncScrollHandler, { passive: true });
 
             // 监听全屏变化
-            const fullscreenHandler = () => {
+            if (fullscreenChangeHandler) {
+                document.removeEventListener('fullscreenchange', fullscreenChangeHandler);
+                document.removeEventListener('webkitfullscreenchange', fullscreenChangeHandler);
+            }
+            fullscreenChangeHandler = () => {
                 const container = document.getElementById('quark-danmaku-container');
                 if (!container) return;
 
@@ -674,17 +866,17 @@ export default defineContentScript({
                     }, 100);
                 }
             };
-            document.addEventListener('fullscreenchange', fullscreenHandler);
-            document.addEventListener('webkitfullscreenchange', fullscreenHandler);
+            document.addEventListener('fullscreenchange', fullscreenChangeHandler);
+            document.addEventListener('webkitfullscreenchange', fullscreenChangeHandler);
 
             // 加载设置
             await loadSettings();
 
             // 尝试加载当前视频的弹幕
-            const videoId = getQuarkVideoId();
-            if (videoId) {
-                currentVideoId = videoId;
-                await loadDanmakuForVideo(videoId);
+            const identity = getCurrentQuarkVideoIdentity();
+            if (identity) {
+                updateCurrentVideoIdentity(identity);
+                await loadDanmakuForVideo(identity.key);
             }
 
             console.log('[Quark] 弹幕引擎初始化完成');
@@ -713,12 +905,14 @@ export default defineContentScript({
         // 加载视频弹幕
         async function loadDanmakuForVideo(videoId) {
             try {
-                const storageKey = `quark_${videoId}`;
+                const storageKey = videoId.startsWith('quark_') ? videoId : `quark_${videoId}`;
                 const result = await browser.storage.local.get(storageKey);
 
                 if (result[storageKey] && result[storageKey].danmakus) {
                     const data = result[storageKey];
                     console.log(`[Quark] 加载弹幕数据: ${data.danmakus.length} 条`);
+                    cachedSelectedBvid = extractBvidFromDanmakuData(data);
+                    markCurrentSelectionInPopover(cachedSelectedBvid);
 
                     if (danmakuEngine) {
                         danmakuEngine.loadDanmakus(data.danmakus);
@@ -726,11 +920,158 @@ export default defineContentScript({
                     return true;
                 } else {
                     console.log('[Quark] 没有找到弹幕数据');
+                    cachedSelectedBvid = null;
+                    markCurrentSelectionInPopover(null);
                     return false;
                 }
             } catch (error) {
                 console.error('[Quark] 加载弹幕失败:', error);
                 return false;
+            }
+        }
+
+        function resetSearchStateForVideo(identity) {
+            cachedSearchResults = null;
+            cachedSearchKeyword = identity?.cleanedTitle || '';
+            cachedSelectedBvid = null;
+
+            const searchInput = document.getElementById('qb-search-input');
+            if (searchInput) {
+                searchInput.value = cachedSearchKeyword;
+            }
+
+            const content = document.getElementById('qb-popover-content');
+            if (content) {
+                content.innerHTML =
+                    '<div class="qb-popover-loading"><span class="qb-loading-spinner"></span>正在搜索...</div>';
+            }
+        }
+
+        function attachVideoTitleObserver() {
+            const titleInfo = getVideoTitleElement();
+            const target = titleInfo?.el || null;
+
+            if (!target || target === videoTitleObserverTarget) {
+                return;
+            }
+
+            if (videoTitleObserver) {
+                videoTitleObserver.disconnect();
+            }
+
+            videoTitleObserverTarget = target;
+            videoTitleObserver = new MutationObserver(() => {
+                scheduleVideoChangeCheck(300);
+            });
+            videoTitleObserver.observe(target, {
+                childList: true,
+                characterData: true,
+                subtree: true
+            });
+        }
+
+        function scheduleVideoChangeCheck(delay = 500) {
+            if (videoChangeCheckTimeout) {
+                clearTimeout(videoChangeCheckTimeout);
+            }
+
+            videoChangeCheckTimeout = setTimeout(() => {
+                videoChangeCheckTimeout = null;
+                checkForVideoChange();
+            }, delay);
+        }
+
+        function startVideoChangeMonitoring() {
+            if (videoChangePollInterval) {
+                return;
+            }
+
+            attachVideoTitleObserver();
+            scheduleVideoChangeCheck(500);
+            videoChangePollInterval = setInterval(() => {
+                attachVideoTitleObserver();
+                scheduleVideoChangeCheck(0);
+            }, 2000);
+        }
+
+        function stopVideoChangeMonitoring() {
+            if (videoChangeCheckTimeout) {
+                clearTimeout(videoChangeCheckTimeout);
+                videoChangeCheckTimeout = null;
+            }
+
+            if (videoChangePollInterval) {
+                clearInterval(videoChangePollInterval);
+                videoChangePollInterval = null;
+            }
+
+            if (videoTitleObserver) {
+                videoTitleObserver.disconnect();
+                videoTitleObserver = null;
+            }
+
+            videoTitleObserverTarget = null;
+        }
+
+        async function checkForVideoChange() {
+            if (handlingVideoSwitch) {
+                return;
+            }
+
+            if (!isVideoPage()) {
+                if (currentVideoKey) {
+                    console.log('[Quark] 离开视频页面');
+                    destroyQuarkDanmaku();
+                    currentVideoId = null;
+                    currentVideoKey = null;
+                    currentVideoTitle = '';
+                }
+                return;
+            }
+
+            const identity = getCurrentQuarkVideoIdentity();
+            if (!identity) return;
+
+            if (!currentVideoKey) {
+                updateCurrentVideoIdentity(identity);
+                return;
+            }
+
+            if (identity.key === currentVideoKey) {
+                return;
+            }
+
+            await handleVideoIdentityChange(identity, 'title');
+        }
+
+        async function handleVideoIdentityChange(identity, reason) {
+            if (!identity || handlingVideoSwitch) {
+                return;
+            }
+
+            handlingVideoSwitch = true;
+            const previousVideoKey = currentVideoKey;
+            const previousVideoTitle = currentVideoTitle;
+            updateCurrentVideoIdentity(identity);
+            resetSearchStateForVideo(identity);
+
+            console.log('[Quark] 视频内容切换:', {
+                reason,
+                from: previousVideoKey,
+                to: identity.key,
+                fromTitle: previousVideoTitle,
+                toTitle: identity.rawTitle
+            });
+
+            try {
+                destroyQuarkDanmaku();
+                await initDanmakuEngine();
+                addDanmakuButton();
+                await backgroundSearchBilibiliVideo();
+            } catch (error) {
+                console.error('[Quark] 处理视频切换失败:', error);
+            } finally {
+                handlingVideoSwitch = false;
             }
         }
 
@@ -752,6 +1093,17 @@ export default defineContentScript({
             if (resizeObserver) {
                 resizeObserver.disconnect();
                 resizeObserver = null;
+            }
+
+            if (syncScrollHandler) {
+                window.removeEventListener('scroll', syncScrollHandler);
+                syncScrollHandler = null;
+            }
+
+            if (fullscreenChangeHandler) {
+                document.removeEventListener('fullscreenchange', fullscreenChangeHandler);
+                document.removeEventListener('webkitfullscreenchange', fullscreenChangeHandler);
+                fullscreenChangeHandler = null;
             }
 
             document.getElementById('quark-danmaku-container')?.remove();
@@ -776,13 +1128,15 @@ export default defineContentScript({
         }
 
         function teardownDisabledState() {
+            stopVideoChangeMonitoring();
             destroyQuarkDanmaku();
             removeDanmakuButton();
             currentVideoId = null;
+            currentVideoKey = null;
+            currentVideoTitle = '';
         }
 
         function scheduleInitAll(delay = 1500) {
-            if (!extensionEnabled) return;
             clearPendingInit();
             pendingInitTimeout = setTimeout(() => {
                 pendingInitTimeout = null;
@@ -791,33 +1145,20 @@ export default defineContentScript({
         }
 
         function startEnabledFeatures() {
-            applyNetworkAndTimerGuards(false);
-            applyStorageGuards(false);
-
             if (document.readyState === 'loading') {
                 document.addEventListener(
                     'DOMContentLoaded',
                     () => {
                         console.log('[Quark] DOMContentLoaded, 准备初始化弹幕引擎');
+                        startVideoChangeMonitoring();
                         scheduleInitAll(1500);
                     },
                     { once: true }
                 );
             } else {
                 console.log('[Quark] 文档已加载, 准备初始化弹幕引擎');
+                startVideoChangeMonitoring();
                 scheduleInitAll(1500);
-            }
-        }
-
-        function updateGlobalEnabledState(enabled) {
-            extensionEnabled = !!enabled;
-
-            if (extensionEnabled) {
-                startEnabledFeatures();
-            } else {
-                teardownDisabledState();
-                applyNetworkAndTimerGuards(true);
-                applyStorageGuards(true);
             }
         }
 
@@ -834,39 +1175,22 @@ export default defineContentScript({
 
         // 处理 hash 变化
         function handleHashChange() {
-            if (!extensionEnabled) {
-                return;
-            }
+            const identity = getCurrentQuarkVideoIdentity();
 
-            const videoId = getQuarkVideoId();
-
-            if (videoId && videoId !== currentVideoId) {
-                console.log('[Quark] 视频切换:', { from: currentVideoId, to: videoId });
-                currentVideoId = videoId;
-
-                // 延迟初始化，等待页面加载
-                scheduleInitAll(1000);
-            } else if (!videoId && currentVideoId) {
+            if (identity && identity.key !== currentVideoKey) {
+                handleVideoIdentityChange(identity, 'hash');
+            } else if (!identity && currentVideoKey) {
                 // 离开视频页面
                 console.log('[Quark] 离开视频页面');
                 destroyQuarkDanmaku();
                 currentVideoId = null;
+                currentVideoKey = null;
+                currentVideoTitle = '';
             }
         }
 
         // 监听来自 popup 的消息
         browser.runtime.onMessage.addListener((request, sender, sendResponse) => {
-            if (request.type === 'EXTENSION_GLOBAL_TOGGLE') {
-                updateGlobalEnabledState(request.enabled);
-                sendResponse({ success: true });
-                return true;
-            }
-
-            if (!extensionEnabled) {
-                sendResponse({ success: false, error: 'extension disabled' });
-                return true;
-            }
-
             if (request.type === 'updateSettings') {
                 if (danmakuEngine) {
                     danmakuEngine.updateSettings(request.settings);
@@ -877,7 +1201,12 @@ export default defineContentScript({
                 return true;
             } else if (request.type === 'loadDanmaku') {
                 // Quark 使用带前缀的 key
-                const videoId = getQuarkVideoId();
+                const identity = getCurrentQuarkVideoIdentity();
+                const requestedVideoId =
+                    request.quarkVideoId && request.quarkVideoId !== identity?.routeId
+                        ? request.quarkVideoId
+                        : null;
+                const videoId = requestedVideoId || identity?.key;
                 if (videoId) {
                     (async () => {
                         // 如果弹幕引擎还没初始化，先初始化
@@ -891,17 +1220,16 @@ export default defineContentScript({
                 }
             } else if (request.type === 'getPageInfo') {
                 // 返回 Quark 页面信息
-                const videoId = getQuarkVideoId();
-                const videoTitle =
-                    document
-                        .querySelector('[class*="video-title"], [class*="file-name"]')
-                        ?.textContent?.trim() || '';
+                const identity = getCurrentQuarkVideoIdentity();
+                const videoTitle = identity?.rawTitle || getVideoTitle({ log: false }) || '';
 
                 sendResponse({
                     success: true,
                     data: {
                         platform: 'quark',
-                        videoId: videoId,
+                        videoId: identity?.key || null,
+                        routeVideoId: identity?.routeId || null,
+                        cleanedVideoTitle: identity?.cleanedTitle || '',
                         videoTitle: videoTitle,
                         url: window.location.href,
                         timestamp: Date.now()
@@ -924,34 +1252,19 @@ export default defineContentScript({
 
         // 初始化函数
         async function initAll() {
-            if (!extensionEnabled) {
-                return;
-            }
-
             // 初始化弹幕引擎
             const success = await initDanmakuEngine();
             console.log('[Quark] 初始化结果:', success);
 
             // 添加B站弹幕按钮
             setTimeout(() => {
-                if (!extensionEnabled) {
-                    return;
-                }
                 addDanmakuButton();
                 // 后台搜索（不显示浮窗）
                 backgroundSearchBilibiliVideo();
             }, 500);
         }
 
-        (async () => {
-            try {
-                const enabled = await getExtensionEnabled();
-                updateGlobalEnabledState(enabled);
-            } catch (error) {
-                console.log('[Quark] 读取全局开关失败，使用启用状态:', error);
-                updateGlobalEnabledState(true);
-            }
-        })();
+        startEnabledFeatures();
 
         console.log('[Quark] 弹幕脚本已加载完成');
     }

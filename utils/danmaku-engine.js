@@ -16,6 +16,7 @@ class DanmakuEngine {
         };
         this.video = null;
         this.isStarted = false;
+        this.fullscreenChangeHandler = null;
 
         // seeking/seeked 配对过滤
         this.lastVideoTime = 0;
@@ -60,8 +61,9 @@ class DanmakuEngine {
         }
 
         // 同时监听全屏变化
-        document.addEventListener('fullscreenchange', () => this.handleFullscreenChange());
-        document.addEventListener('webkitfullscreenchange', () => this.handleFullscreenChange());
+        this.fullscreenChangeHandler = () => this.handleFullscreenChange();
+        document.addEventListener('fullscreenchange', this.fullscreenChangeHandler);
+        document.addEventListener('webkitfullscreenchange', this.fullscreenChangeHandler);
     }
 
     updateStageSize() {
@@ -784,6 +786,11 @@ class DanmakuEngine {
         }
         if (this.resizeObserver) {
             this.resizeObserver.disconnect();
+        }
+        if (this.fullscreenChangeHandler) {
+            document.removeEventListener('fullscreenchange', this.fullscreenChangeHandler);
+            document.removeEventListener('webkitfullscreenchange', this.fullscreenChangeHandler);
+            this.fullscreenChangeHandler = null;
         }
     }
 }
