@@ -1597,6 +1597,9 @@ function bindQuarkUIEvents() {
         const el = document.getElementById(id);
         if (el && !el.hasAttribute('data-bound')) {
             el.setAttribute('data-bound', 'true');
+            if (el.type === 'checkbox' && el.closest('label.toggle')) {
+                attachToggleAnimationHandlers(el);
+            }
             el.addEventListener('input', () => {
                 updateQuarkSliderValues();
                 saveQuarkSettings();
@@ -1609,6 +1612,7 @@ function bindQuarkUIEvents() {
     const matchThresholdGroup = document.getElementById('quark-match-threshold-group');
     if (autoDownloadEl && !autoDownloadEl.hasAttribute('data-bound')) {
         autoDownloadEl.setAttribute('data-bound', 'true');
+        attachToggleAnimationHandlers(autoDownloadEl);
         autoDownloadEl.addEventListener('change', () => {
             // 显示/隐藏匹配度滑条
             if (matchThresholdGroup) {
@@ -1685,7 +1689,7 @@ function updateQuarkSliderValues() {
     }
     if (filterLevelEl) {
         const level = parseInt(filterLevelEl.value);
-        const text = level === 0 ? '0（显示全部）' : level + '（过滤等级）';
+        const text = level === 0 ? '0（显示全部）' : `不显示${level}级以下`;
         document.getElementById('quark-filter-level-value').textContent = text;
     }
     if (matchThresholdEl) {

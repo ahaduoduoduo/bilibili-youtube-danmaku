@@ -68,16 +68,18 @@
 
             <div class="controls">
                 <div class="control-group">
-                    <label>
+                    <label class="toggle">
+                        <span class="toggle-label">弹幕开关</span>
                         <input type="checkbox" id="quark-enable-danmaku" checked />
-                        启用弹幕
+                        <span class="toggle-slider" aria-hidden="true"></span>
                     </label>
                 </div>
 
                 <div class="control-group">
-                    <label>
+                    <label class="toggle">
+                        <span class="toggle-label">自动下载弹幕</span>
                         <input type="checkbox" id="quark-auto-download" />
-                        自动下载弹幕
+                        <span class="toggle-slider" aria-hidden="true"></span>
                     </label>
                 </div>
 
@@ -160,21 +162,37 @@
                 <div class="control-group">
                     <label>显示区域：</label>
                     <div class="display-area-buttons">
-                        <button type="button" class="quark-display-area-btn" data-value="10">
+                        <button
+                            type="button"
+                            class="display-area-btn quark-display-area-btn"
+                            data-value="10"
+                        >
                             10%
                         </button>
-                        <button type="button" class="quark-display-area-btn" data-value="25">
+                        <button
+                            type="button"
+                            class="display-area-btn quark-display-area-btn"
+                            data-value="25"
+                        >
                             25%
                         </button>
-                        <button type="button" class="quark-display-area-btn" data-value="50">
+                        <button
+                            type="button"
+                            class="display-area-btn quark-display-area-btn"
+                            data-value="50"
+                        >
                             50%
                         </button>
-                        <button type="button" class="quark-display-area-btn" data-value="75">
+                        <button
+                            type="button"
+                            class="display-area-btn quark-display-area-btn"
+                            data-value="75"
+                        >
                             75%
                         </button>
                         <button
                             type="button"
-                            class="quark-display-area-btn active"
+                            class="display-area-btn quark-display-area-btn active"
                             data-value="100"
                         >
                             100%
