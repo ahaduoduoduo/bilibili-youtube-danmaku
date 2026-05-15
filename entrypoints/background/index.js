@@ -2,7 +2,13 @@
 
 // 导入番剧处理模块
 import { searchBilibiliBangumi, findEpisodeByNumber, getBangumiEpisodeDetail } from './bangumi.js';
-import { getExtensionEnabled, applyNetworkAndTimerGuards, applyStorageGuards, forwardToggleToAllTabs, updateExtensionIcon } from '../../utils/globalToggle.js';
+import {
+    getExtensionEnabled,
+    applyNetworkAndTimerGuards,
+    applyStorageGuards,
+    forwardToggleToAllTabs,
+    updateExtensionIcon
+} from '../../utils/globalToggle.js';
 // 引入protobuf解析器和OpenCC库
 import '../../lib/protobuf-parser.js';
 import '../../lib/opencc.min.js';
@@ -57,11 +63,15 @@ export default defineBackground(() => {
         if (type === 'pendingSearchResults') {
             pendingSearchResultsByTab.set(tabId, data);
             pendingNoMatchResultsByTab.delete(tabId);
-            await browser.storage.local.remove(getPendingPopupStorageKey('pendingNoMatchResults', tabId));
+            await browser.storage.local.remove(
+                getPendingPopupStorageKey('pendingNoMatchResults', tabId)
+            );
         } else {
             pendingNoMatchResultsByTab.set(tabId, data);
             pendingSearchResultsByTab.delete(tabId);
-            await browser.storage.local.remove(getPendingPopupStorageKey('pendingSearchResults', tabId));
+            await browser.storage.local.remove(
+                getPendingPopupStorageKey('pendingSearchResults', tabId)
+            );
         }
 
         await browser.storage.local.set({
@@ -1091,7 +1101,10 @@ export default defineBackground(() => {
             const data = await response.json();
 
             // 原样打印完整的搜索结果
-            console.log('[searchBilibiliVideoAllV2] 搜索结果原始数据:', JSON.stringify(data, null, 2));
+            console.log(
+                '[searchBilibiliVideoAllV2] 搜索结果原始数据:',
+                JSON.stringify(data, null, 2)
+            );
 
             if (data.code !== 0) {
                 throw new Error(`API返回错误: ${data.message || '未知错误'}`);
@@ -1101,8 +1114,8 @@ export default defineBackground(() => {
             const results = [];
             if (data.data && data.data.result) {
                 // 查找 result_type 为 'video' 的项
-                const videoResult = data.data.result.find(item => item.result_type === 'video');
-                
+                const videoResult = data.data.result.find((item) => item.result_type === 'video');
+
                 if (videoResult && videoResult.data) {
                     for (const video of videoResult.data.slice(0, 5)) {
                         // 只返回前5个结果
@@ -1657,11 +1670,10 @@ export default defineBackground(() => {
                                     data: dataToSend
                                 })
                                 .then(async () => {
-                                    await clearPendingPopupData(
-                                        'pendingSearchResults',
-                                        popupTabId
+                                    await clearPendingPopupData('pendingSearchResults', popupTabId);
+                                    console.log(
+                                        `已清理标签页${popupTabId}的pendingSearchResults数据`
                                     );
-                                    console.log(`已清理标签页${popupTabId}的pendingSearchResults数据`);
                                 })
                                 .catch((error) => {
                                     console.log('发送搜索结果消息失败:', error);
@@ -1694,7 +1706,9 @@ export default defineBackground(() => {
                                         'pendingNoMatchResults',
                                         popupTabId
                                     );
-                                    console.log(`已清理标签页${popupTabId}的pendingNoMatchResults数据`);
+                                    console.log(
+                                        `已清理标签页${popupTabId}的pendingNoMatchResults数据`
+                                    );
                                 })
                                 .catch((error) => {
                                     console.log('发送未匹配结果消息失败:', error);

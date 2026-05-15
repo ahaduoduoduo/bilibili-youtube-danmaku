@@ -27,7 +27,7 @@ function avToBv(avid) {
     let x = (BigInt(avid) ^ BigInt(xor)) + add;
     const r = Array.from('BV1  4 1 7  ');
     for (let i = 0; i < 6; i++) {
-        r[s[i]] = table[Number(x / 58n ** BigInt(i) % 58n)];
+        r[s[i]] = table[Number((x / 58n ** BigInt(i)) % 58n)];
     }
     return r.join('');
 }

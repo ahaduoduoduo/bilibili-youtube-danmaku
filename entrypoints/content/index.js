@@ -98,13 +98,17 @@ export default defineContentScript({
             return (
                 globalCandidates.find((element) => {
                     return element.textContent.trim() && extractChannelIdFromHref(element.href);
-                }) || globalCandidates[0] || null
+                }) ||
+                globalCandidates[0] ||
+                null
             );
         }
 
         function getChannelAvatar(channelLink) {
             const avatarSearchRoots = [];
-            const ownerRoot = channelLink?.closest('#owner, ytd-video-owner-renderer, ytd-watch-metadata');
+            const ownerRoot = channelLink?.closest(
+                '#owner, ytd-video-owner-renderer, ytd-watch-metadata'
+            );
 
             if (ownerRoot) {
                 avatarSearchRoots.push(ownerRoot);
