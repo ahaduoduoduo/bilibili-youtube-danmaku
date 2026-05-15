@@ -570,7 +570,12 @@ async function getPageInfo(useCache = true) {
                     if (backgroundResponse.data.videoId === currentVideoId) {
                         return backgroundResponse.data;
                     } else {
-                        console.warn('background缓存的视频ID与当前不匹配，fallback到直接获取');
+                        console.warn('background缓存的视频ID与当前不匹配，清除缓存并重新获取');
+                        // 如果视频ID不匹配，清除background缓存
+                        await browser.runtime.sendMessage({
+                            type: 'clearTabCache',
+                            tabId: tab.id
+                        });
                     }
                 }
             } catch (error) {
@@ -805,7 +810,8 @@ function displayChannelInfo(pageInfo) {
     document.getElementById('channel-name').textContent = isBangumiChannel
         ? '哔哩哔哩动画'
         : channel.channelName || '未知频道';
-    document.getElementById('channel-id').textContent = `ID: ${channel.channelId || '未知'}`;
+    document.getElementById('channel-id').textContent =
+        `ID: ${decodeURIComponent(channel.channelId || '未知')}`;
 
     channelInfoDiv.style.display = 'block';
 
