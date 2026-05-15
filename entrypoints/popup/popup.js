@@ -83,8 +83,13 @@ async function loadSocialIconsConfig() {
 function renderSocialIcons(config) {
     const socialIconsContainer = document.getElementById('social-icons');
     const socialIconsSimpleContainer = document.getElementById('social-icons-simple');
+    const socialIconsQuarkContainer = document.getElementById('social-icons-quark');
 
-    const containers = [socialIconsContainer, socialIconsSimpleContainer].filter(Boolean);
+    const containers = [
+        socialIconsContainer,
+        socialIconsSimpleContainer,
+        socialIconsQuarkContainer
+    ].filter(Boolean);
 
     if (!config || !config.socialLinks || config.socialLinks.length === 0) {
         containers.forEach((container) => {
@@ -164,7 +169,8 @@ function setPopupEnabledUI(enabled) {
     try {
         const mainContainer = document.getElementById('main-container');
         const simpleContainer = document.getElementById('simple-container');
-        [mainContainer, simpleContainer].forEach((el) => {
+        const quarkContainer = document.getElementById('quark-container');
+        [mainContainer, simpleContainer, quarkContainer].forEach((el) => {
             if (!el) return;
             if (enabled) {
                 el.classList.remove('disabled');
@@ -1578,13 +1584,48 @@ function bindQuarkUIEvents() {
     }
 
     // 设置变更事件
-    const settingIds = ['quark-enable-danmaku', 'quark-opacity', 'quark-font-size', 'quark-speed'];
+    const settingIds = [
+        'quark-enable-danmaku',
+        'quark-opacity',
+        'quark-font-size',
+        'quark-speed',
+        'quark-track-spacing',
+        'quark-filter-level',
+        'quark-match-threshold'
+    ];
     settingIds.forEach((id) => {
         const el = document.getElementById(id);
         if (el && !el.hasAttribute('data-bound')) {
             el.setAttribute('data-bound', 'true');
             el.addEventListener('input', () => {
                 updateQuarkSliderValues();
+                saveQuarkSettings();
+            });
+        }
+    });
+
+    // 自动下载开关事件
+    const autoDownloadEl = document.getElementById('quark-auto-download');
+    const matchThresholdGroup = document.getElementById('quark-match-threshold-group');
+    if (autoDownloadEl && !autoDownloadEl.hasAttribute('data-bound')) {
+        autoDownloadEl.setAttribute('data-bound', 'true');
+        autoDownloadEl.addEventListener('change', () => {
+            // 显示/隐藏匹配度滑条
+            if (matchThresholdGroup) {
+                matchThresholdGroup.style.display = autoDownloadEl.checked ? 'block' : 'none';
+            }
+            saveQuarkSettings();
+        });
+    }
+
+    // 显示区域按钮事件
+    const displayAreaBtns = document.querySelectorAll('.quark-display-area-btn');
+    displayAreaBtns.forEach((btn) => {
+        if (!btn.hasAttribute('data-bound')) {
+            btn.setAttribute('data-bound', 'true');
+            btn.addEventListener('click', () => {
+                displayAreaBtns.forEach((b) => b.classList.remove('active'));
+                btn.classList.add('active');
                 saveQuarkSettings();
             });
         }
@@ -1625,6 +1666,9 @@ function updateQuarkSliderValues() {
     const opacityEl = document.getElementById('quark-opacity');
     const fontSizeEl = document.getElementById('quark-font-size');
     const speedEl = document.getElementById('quark-speed');
+    const trackSpacingEl = document.getElementById('quark-track-spacing');
+    const filterLevelEl = document.getElementById('quark-filter-level');
+    const matchThresholdEl = document.getElementById('quark-match-threshold');
 
     if (opacityEl) {
         document.getElementById('quark-opacity-value').textContent = opacityEl.value + '%';
@@ -1634,6 +1678,19 @@ function updateQuarkSliderValues() {
     }
     if (speedEl) {
         document.getElementById('quark-speed-value').textContent = speedEl.value + 'x';
+    }
+    if (trackSpacingEl) {
+        document.getElementById('quark-track-spacing-value').textContent =
+            trackSpacingEl.value + 'px';
+    }
+    if (filterLevelEl) {
+        const level = parseInt(filterLevelEl.value);
+        const text = level === 0 ? '0（显示全部）' : level + '（过滤等级）';
+        document.getElementById('quark-filter-level-value').textContent = text;
+    }
+    if (matchThresholdEl) {
+        document.getElementById('quark-match-threshold-value').textContent =
+            matchThresholdEl.value + '%';
     }
 }
 
@@ -1647,15 +1704,21 @@ async function saveQuarkSettings() {
             ? parseFloat(timeOffsetInput.value) || 0
             : parseFloat(timeOffsetSlider?.value) || 0;
 
+    // 获取显示区域
+    const activeAreaBtn = document.querySelector('.quark-display-area-btn.active');
+    const displayAreaPercentage = activeAreaBtn ? parseInt(activeAreaBtn.dataset.value) : 100;
+
     const settings = {
         enabled: document.getElementById('quark-enable-danmaku')?.checked ?? true,
         timeOffset: timeOffset,
         opacity: parseInt(document.getElementById('quark-opacity')?.value) || 100,
         fontSize: parseInt(document.getElementById('quark-font-size')?.value) || 24,
         speed: parseFloat(document.getElementById('quark-speed')?.value) || 1.0,
-        trackSpacing: 8,
-        displayAreaPercentage: 100,
-        weightThreshold: 0
+        trackSpacing: parseInt(document.getElementById('quark-track-spacing')?.value) || 8,
+        displayAreaPercentage: displayAreaPercentage,
+        weightThreshold: parseInt(document.getElementById('quark-filter-level')?.value) || 0,
+        autoDownload: document.getElementById('quark-auto-download')?.checked ?? false,
+        matchThreshold: parseInt(document.getElementById('quark-match-threshold')?.value) || 90
     };
 
     await browser.storage.local.set({ danmakuSettings: settings });
@@ -1678,22 +1741,47 @@ async function loadQuarkSettings() {
         timeOffset: 0,
         opacity: 100,
         fontSize: 24,
-        speed: 1.0
+        speed: 1.0,
+        trackSpacing: 8,
+        displayAreaPercentage: 100,
+        weightThreshold: 0,
+        autoDownload: false,
+        matchThreshold: 90
     };
 
     const enableEl = document.getElementById('quark-enable-danmaku');
     const opacityEl = document.getElementById('quark-opacity');
     const fontSizeEl = document.getElementById('quark-font-size');
     const speedEl = document.getElementById('quark-speed');
+    const trackSpacingEl = document.getElementById('quark-track-spacing');
+    const filterLevelEl = document.getElementById('quark-filter-level');
     const timeOffsetSlider = document.getElementById('quark-time-offset');
     const timeOffsetInput = document.getElementById('quark-time-offset-input');
+    const autoDownloadEl = document.getElementById('quark-auto-download');
+    const matchThresholdEl = document.getElementById('quark-match-threshold');
+    const matchThresholdGroup = document.getElementById('quark-match-threshold-group');
 
     if (enableEl) enableEl.checked = settings.enabled;
     if (opacityEl) opacityEl.value = settings.opacity;
     if (fontSizeEl) fontSizeEl.value = settings.fontSize;
     if (speedEl) speedEl.value = settings.speed || 1.0;
+    if (trackSpacingEl) trackSpacingEl.value = settings.trackSpacing || 8;
+    if (filterLevelEl) filterLevelEl.value = settings.weightThreshold || 0;
     if (timeOffsetSlider) timeOffsetSlider.value = settings.timeOffset;
     if (timeOffsetInput) timeOffsetInput.value = settings.timeOffset;
+    if (autoDownloadEl) autoDownloadEl.checked = settings.autoDownload || false;
+    if (matchThresholdEl) matchThresholdEl.value = settings.matchThreshold || 90;
+    if (matchThresholdGroup)
+        matchThresholdGroup.style.display = settings.autoDownload ? 'block' : 'none';
+
+    // 设置显示区域按钮状态
+    const displayAreaBtns = document.querySelectorAll('.quark-display-area-btn');
+    displayAreaBtns.forEach((btn) => {
+        btn.classList.remove('active');
+        if (parseInt(btn.dataset.value) === (settings.displayAreaPercentage || 100)) {
+            btn.classList.add('active');
+        }
+    });
 
     updateQuarkSliderValues();
 }

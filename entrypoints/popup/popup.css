@@ -60,7 +60,8 @@ body {
 
 /* Disabled state for containers when extension is off */
 #main-container.disabled,
-#simple-container.disabled {
+#simple-container.disabled,
+#quark-container.disabled {
     opacity: 0.5;
     filter: grayscale(0.2);
     pointer-events: none;
@@ -797,6 +798,12 @@ label.toggle {
 .control-group span {
     margin-left: 6px;
     font-size: 13px;
+    color: #999;
+}
+
+.control-hint {
+    margin: 4px 0 0 0;
+    font-size: 12px;
     color: #999;
 }
 

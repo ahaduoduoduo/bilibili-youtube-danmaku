@@ -3,7 +3,7 @@ import { defineConfig } from 'wxt';
 // See https://wxt.dev/api/config.html
 export default defineConfig({
     manifest: {
-        permissions: ['storage', 'activeTab'],
+        permissions: ['storage', 'activeTab', 'unlimitedStorage'],
         host_permissions: [
             'https://api.bilibili.com/*',
             'https://www.bilibili.com/*',

@@ -1068,6 +1068,11 @@ export default defineBackground(() => {
     // 综合搜索视频（使用 search/all/v2 API）
     async function searchBilibiliVideoAllV2(keyword) {
         try {
+            // 将标点符号替换为空格，优化 B 站搜索体验
+            keyword = keyword
+                .replace(/[\p{P}]/gu, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
             console.log(`[searchBilibiliVideoAllV2] 开始搜索: "${keyword}"`);
 
             // 获取WBI Keys
@@ -1110,6 +1115,41 @@ export default defineBackground(() => {
                 throw new Error(`API返回错误: ${data.message || '未知错误'}`);
             }
 
+            // 解码 HTML 实体（如 &quot; → "）
+            const decodeHtmlEntities = (str) => {
+                return str
+                    .replace(/&quot;/g, '"')
+                    .replace(/&amp;/g, '&')
+                    .replace(/&lt;/g, '<')
+                    .replace(/&gt;/g, '>')
+                    .replace(/&nbsp;/g, ' ')
+                    .replace(/&#(\d+);/g, (_, code) => String.fromCharCode(code));
+            };
+
+            // 计算高亮字符占标题总长度的比例（只保留字母和数字）
+            function calculateHighlightRatio(htmlTitle) {
+                // 只保留字母和数字（去掉标点、符号、空格等）
+                const removeNonText = (str) => str.replace(/[^\p{L}\p{N}]/gu, '');
+
+                // 提取 <em> 标签内的文本长度
+                const emMatches = htmlTitle.match(/<em[^>]*>([^<]*)<\/em>/g) || [];
+                let highlightLength = 0;
+                emMatches.forEach((match) => {
+                    const text = removeNonText(decodeHtmlEntities(match.replace(/<[^>]*>/g, '')));
+                    highlightLength += text.length;
+                });
+
+                // 去掉所有标签后的纯文本，截取前 26 个字符（模拟 B 站显示长度），再去掉标点和空格
+                const plainTextFull = decodeHtmlEntities(htmlTitle.replace(/<[^>]*>/g, ''));
+                const truncatedPlainText = plainTextFull.substring(0, 26);
+                const plainText = removeNonText(truncatedPlainText);
+                const totalLength = plainText.length;
+
+                // 比例可能超过 1（高亮部分在截断范围外），取最大值 1
+                const ratio = totalLength > 0 ? highlightLength / totalLength : 0;
+                return Math.min(ratio, 1);
+            }
+
             // 从 result 数组中提取视频结果
             const results = [];
             if (data.data && data.data.result) {
@@ -1119,15 +1159,19 @@ export default defineBackground(() => {
                 if (videoResult && videoResult.data) {
                     for (const video of videoResult.data.slice(0, 5)) {
                         // 只返回前5个结果
+                        const highlightRatio = calculateHighlightRatio(video.title);
+                        // 去掉 HTML 标签并解码实体
+                        const cleanTitle = decodeHtmlEntities(video.title.replace(/<[^>]*>/g, ''));
                         results.push({
                             bvid: video.bvid,
-                            title: video.title.replace(/<[^>]*>/g, ''), // 去除HTML高亮标签
+                            title: cleanTitle,
                             author: video.author,
                             mid: video.mid,
                             pic: video.pic.startsWith('//') ? `https:${video.pic}` : video.pic,
                             play: video.play,
                             duration: video.duration,
-                            pubdate: video.pubdate
+                            pubdate: video.pubdate,
+                            highlightRatio: highlightRatio // 高亮比例，用于判断匹配度
                         });
                     }
                 }
@@ -1549,9 +1593,27 @@ export default defineBackground(() => {
                         }
                     };
 
-                    await browser.storage.local.set(storageData);
+                    // 尝试存储，如果空间不足则清理后重试
+                    try {
+                        await browser.storage.local.set(storageData);
+                    } catch (storageError) {
+                        // 检查是否是配额超限错误
+                        if (storageError.message && storageError.message.includes('quota')) {
+                            console.log('[Quark] 存储空间不足，清理过期数据后重试...');
+                            await cleanupExpiredDanmaku();
+                            // 重试存储
+                            await browser.storage.local.set(storageData);
+                        } else {
+                            throw storageError;
+                        }
+                    }
 
                     console.log(`[Quark] 弹幕已保存: ${storageKey}, ${data.danmakus.length} 条`);
+
+                    // 异步清理过期弹幕数据，不阻塞响应
+                    Promise.resolve().then(() => {
+                        cleanupExpiredDanmaku();
+                    });
 
                     sendResponse({
                         success: true,
