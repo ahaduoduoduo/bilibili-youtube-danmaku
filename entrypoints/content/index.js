@@ -1,6 +1,11 @@
 import './danmaku.css';
 import { channelAssociation } from '../../utils/channelAssociation.js';
 import DanmakuEngine from '../../utils/danmaku-engine.js';
+import {
+    getExtensionEnabled,
+    applyNetworkAndTimerGuards,
+    applyStorageGuards
+} from '../../utils/globalToggle.js';
 
 export default defineContentScript({
     matches: ['*://*.youtube.com/*'],
@@ -13,6 +18,8 @@ export default defineContentScript({
         let pageInfoCache = new Map();
         let activeInitToken = 0;
         let pendingInitTimeout = null;
+        let extensionEnabled = true;
+        let urlObserver = null;
         const channelNameSelectors = [
             'yt-formatted-string.ytd-channel-name a',
             '#channel-name .ytd-channel-name a',
@@ -465,6 +472,10 @@ export default defineContentScript({
         }
 
         function scheduleDanmakuEngineInit({ delay = 1000, updatePageInfo = false } = {}) {
+            if (!extensionEnabled) {
+                return;
+            }
+
             activeInitToken += 1;
             const token = activeInitToken;
 
@@ -494,6 +505,10 @@ export default defineContentScript({
 
         // 初始化弹幕引擎
         async function initDanmakuEngine(token = activeInitToken) {
+            if (!extensionEnabled) {
+                return false;
+            }
+
             if (!isInitTokenCurrent(token)) {
                 return false;
             }
@@ -801,6 +816,10 @@ export default defineContentScript({
 
         // 启动页面信息持续监控
         function startPageInfoMonitoring() {
+            if (!extensionEnabled) {
+                return;
+            }
+
             console.log('启动页面信息持续监控');
 
             // 停止现有的监控器防止重复
@@ -894,15 +913,29 @@ export default defineContentScript({
             }
         }
 
-        // 监听URL变化
-        let lastUrl = location.href;
-        new MutationObserver(() => {
-            const url = location.href;
-            if (url !== lastUrl) {
-                lastUrl = url;
-                handleUrlChange();
+        // 监听URL变化（按开关控制）
+        function setupUrlObserver() {
+            if (urlObserver) return;
+            let lastUrl = location.href;
+            urlObserver = new MutationObserver(() => {
+                if (!extensionEnabled) return;
+                const url = location.href;
+                if (url !== lastUrl) {
+                    lastUrl = url;
+                    handleUrlChange();
+                }
+            });
+            urlObserver.observe(document, { subtree: true, childList: true });
+        }
+
+        function teardownUrlObserver() {
+            if (urlObserver) {
+                try {
+                    urlObserver.disconnect();
+                } catch (e) {}
+                urlObserver = null;
             }
-        }).observe(document, { subtree: true, childList: true });
+        }
 
         // 处理URL变化（增强版）
         function handleUrlChange() {
@@ -1181,39 +1214,96 @@ export default defineContentScript({
 
         // 页面加载完成后初始化
         function initializePage() {
+            if (!extensionEnabled) {
+                return;
+            }
+
             scheduleDanmakuEngineInit({ delay: 1000 });
             setTimeout(() => {
-                startPageInfoMonitoring();
+                if (extensionEnabled) {
+                    startPageInfoMonitoring();
+                }
             }, 1000);
         }
 
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', initializePage);
-        } else {
-            initializePage();
+        function startEnabledFeatures() {
+            setupUrlObserver();
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', initializePage, { once: true });
+            } else {
+                initializePage();
+            }
+        }
+
+        function teardownDisabledState() {
+            activeInitToken += 1;
+            if (pendingInitTimeout) {
+                clearTimeout(pendingInitTimeout);
+                pendingInitTimeout = null;
+            }
+            stopPageInfoMonitoring();
+            resetDanmakuEngineState();
+            teardownUrlObserver();
         }
 
         // 页面卸载时清理资源
         window.addEventListener('beforeunload', () => {
             console.log('页面卸载，清理监控器');
-            stopPageInfoMonitoring();
-            stopAdStatusMonitoring();
+            teardownDisabledState();
         });
 
         // 可见性变化时的处理
         document.addEventListener('visibilitychange', () => {
+            if (!extensionEnabled) {
+                return;
+            }
+
             if (document.visibilityState === 'hidden') {
                 console.log('页面隐藏，暂停监控器');
                 stopPageInfoMonitoring();
             } else if (document.visibilityState === 'visible') {
                 console.log('页面可见，恢复监控器');
-                // 延迟重启，等待页面稳定
                 setTimeout(() => {
-                    if (window.location.href.includes('youtube.com/watch')) {
+                    if (extensionEnabled && window.location.href.includes('youtube.com/watch')) {
                         startPageInfoMonitoring();
                     }
                 }, 1000);
             }
         });
+
+        // 热切换监听（不占用消息通道）
+        browser.runtime.onMessage.addListener((request) => {
+            if (request && request.type === 'EXTENSION_GLOBAL_TOGGLE') {
+                extensionEnabled = !!request.enabled;
+                if (extensionEnabled) {
+                    // Re-enable: remove guards first, then start features
+                    applyNetworkAndTimerGuards(false);
+                    applyStorageGuards(false);
+                    startEnabledFeatures();
+                } else {
+                    // Disable: teardown first while clearInterval/clearTimeout still original
+                    teardownDisabledState();
+                    applyNetworkAndTimerGuards(true);
+                    applyStorageGuards(true);
+                }
+            }
+        });
+
+        // 启动时读取总开关
+        (async () => {
+            try {
+                const enabled = await getExtensionEnabled();
+                extensionEnabled = !!enabled;
+            } catch (e) {
+                extensionEnabled = true;
+            }
+            applyNetworkAndTimerGuards(!extensionEnabled);
+            applyStorageGuards(!extensionEnabled);
+            if (extensionEnabled) {
+                startEnabledFeatures();
+            } else {
+                teardownDisabledState();
+            }
+        })();
     }
 });
